@@ -110,6 +110,32 @@ object GrallocProbe {
         return null
     }
 
+    /**
+     * Added for AEmulator Plus (2026-11-01): the alloc_device_t slot this firmware's libui frees buffers through, read from
+     * its code: 0x44 (AOSP) or 0x48 (Sony 4.2.x), or null when it cannot be told. The call is `ldr r3,[rN,#slot]; blx r3`
+     * (Thumb, 0x4798), which is how GraphicBufferAllocator::free and ::alloc dispatch (alloc is +0x40, so it does not mix
+     * the two up). A firmware whose libui uses 0x44 must keep the engine gralloc as it is: the device size alone (a
+     * bigger alloc_device_t, which an ION gralloc has too) said "Sony" for a MediaTek 4.2 build, free was moved to +0x48,
+     * and libui called the NULL at +0x44 (SurfaceFlinger: SIGSEGV pc=0, lr libui+0x687d, in a loop).
+     */
+    fun libuiFreeSlot(libui: ByteArray): Int? {
+        // GraphicBufferAllocator::free: `ldr r0,[rX]` (the device), `mov r1,rY` (the handle), `ldr r3,[r0,#slot]`, `blx r3`.
+        // A bare `ldr r3,[rN,#0x44]; blx r3` is any virtual call, so the two set-up instructions are required as well.
+        var at44 = 0; var at48 = 0
+        fun h(o: Int) = (libui[o].toInt() and 0xff) or ((libui[o + 1].toInt() and 0xff) shl 8)
+        var p = 0
+        while (p + 8 <= libui.size) {
+            if (h(p + 6) == 0x4798 && (h(p + 4) and 0xf83f) == 0x6803 /* ldr r3,[r0,#imm5*4] */) {
+                val a = h(p); val b = h(p + 2)
+                fun ldr0(x: Int) = (x and 0xffc0) == 0x6800 && (x and 7) == 0    // ldr r0,[rX,#0]
+                fun mov1(x: Int) = (x and 0xff87) == 0x4601                       // mov r1,rY
+                if ((ldr0(a) && mov1(b)) || (mov1(a) && ldr0(b))) when (((h(p + 4) shr 6) and 0x1f) * 4) { 0x44 -> at44++; 0x48 -> at48++ }
+            }
+            p += 2
+        }
+        return when { at44 > 0 && at48 == 0 -> 0x44; at48 > 0 && at44 == 0 -> 0x48; else -> null }
+    }
+
     /** File offset of the Thumb `gralloc_device_open` (HMI.methods->open), or null. */
     private fun openFunctionOffset(d: ByteArray): Int? {
         return try {

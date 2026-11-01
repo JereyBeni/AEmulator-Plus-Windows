@@ -44,6 +44,11 @@ enum {
     NR_renameat2 = 276, NR_memfd_create = 279, NR_statx = 291, NR_faccessat2 = 439,
 };
 
+// A ring buffer map of the eBPF stand-in (bpf(), OBJ_GET): the data area, and the size of the file that maps it - the
+// consumer page, the producer page and the data twice over, which is how it is mapped
+#define RB_DATA 0x40000UL
+#define RB_FILE (2 * 4096UL + 2 * RB_DATA)
+
 #define AT_FDCWD (-100)
 #define ENOENT 2
 #define ENOEXEC 8
@@ -662,6 +667,66 @@ static long input_ioctl(u32 cmd, u64 arg) {
     return -EINVAL;
 }
 
+
+// ---- ring buffer stand-in: waiting on it blocks (added 2026-11-01)
+// The stand-in of OBJ_GET is a memfd, and a memfd cannot be waited on the way the real ring buffer can: epoll_ctl()
+// refuses it (EPERM - "LoopbackEventHandler: Failed to add ringbuf to epoll: 1") and poll() reports a regular file as
+// ready at once. Samsung's DnsEventController / NetworkBlockController loops then returned from every wait without an
+// event and spun ("Still waiting for ... events" hundreds of times a second, a logger race ending in a SIGABRT).
+// Nothing is ever produced here, so a wait on one has to last until its timeout: epoll gets an eventfd that is never
+// written in its place, and poll() has the entry left out. (select() is not covered: nobody waits on a ring buffer so.)
+static unsigned char g_rbfd[1024];                  // descriptors that are a stand-in of ours
+static struct { int ep, rb, ev; } g_rbep[32];       // the eventfd that stands for rb in the epoll set ep
+static volatile int g_rblock;
+static void rb_lock(void) { while (__atomic_exchange_n(&g_rblock, 1, __ATOMIC_ACQUIRE)) S0(NR_sched_yield); }
+static void rb_unlock(void) { __atomic_store_n(&g_rblock, 0, __ATOMIC_RELEASE); }
+static int rb_is(long fd) { return fd >= 0 && fd < (long)sizeof g_rbfd && g_rbfd[fd]; }
+static int rb_find(long ep, long rb) {              // (the lock is held)
+    for (int i = 0; i < 32; i++) if (g_rbep[i].ev && g_rbep[i].ep == ep && g_rbep[i].rb == rb) return i;
+    return -1;
+}
+static long rb_epoll_ctl(long ep, long op, long fd, void *ev) {
+    long r; int i;
+    rb_lock();
+    i = rb_find(ep, fd);
+    if (op == 1 /*EPOLL_CTL_ADD*/) {
+        if (i >= 0) { rb_unlock(); return -17; }                // EEXIST
+        for (i = 0; i < 32 && g_rbep[i].ev; i++) {}
+        if (i == 32) { rb_unlock(); return -ENOMEM; }
+        long e = S2(19 /*eventfd2*/, 0, 02004000 /*EFD_CLOEXEC|EFD_NONBLOCK*/);
+        if (e < 0) { rb_unlock(); return e; }
+        r = S4(21, ep, 1, e, ev);                               // the caller's events and data, the other descriptor
+        if (r < 0) { S1(NR_close, e); rb_unlock(); return r; }
+        g_rbep[i].ep = (int)ep; g_rbep[i].rb = (int)fd; g_rbep[i].ev = (int)e;
+        rb_unlock(); return 0;
+    }
+    if (i < 0) { rb_unlock(); return -ENOENT; }
+    if (op == 3 /*EPOLL_CTL_MOD*/) r = S4(21, ep, 3, g_rbep[i].ev, ev);
+    else {                                                      // EPOLL_CTL_DEL
+        r = S4(21, ep, 2, g_rbep[i].ev, 0);
+        S1(NR_close, g_rbep[i].ev); g_rbep[i].ev = 0;
+    }
+    rb_unlock();
+    return r;
+}
+// closing a stand-in, or an epoll set that holds some: their eventfds go with them
+static void rb_closed(long fd) {
+    rb_lock();
+    for (int i = 0; i < 32; i++) if (g_rbep[i].ev && (g_rbep[i].rb == fd || g_rbep[i].ep == fd)) { S1(NR_close, g_rbep[i].ev); g_rbep[i].ev = 0; }
+    if (rb_is(fd)) g_rbfd[fd] = 0;
+    rb_unlock();
+}
+static long rb_ppoll(long *a) {
+    struct pfd { int fd; short events, revents; } *u = (struct pfd *)a[0], c[64];
+    u64 n = (u64)a[1], hit = 0;
+    if (!u || n == 0 || n > 64) return S5(73, a[0], a[1], a[2], a[3], a[4]);
+    for (u64 i = 0; i < n; i++) { c[i] = u[i]; if (rb_is(c[i].fd)) { c[i].fd = -1; hit = 1; } }
+    if (!hit) return S5(73, a[0], a[1], a[2], a[3], a[4]);
+    long r = S5(73, c, n, a[2], a[3], a[4]);
+    if (r >= 0) for (u64 i = 0; i < n; i++) u[i].revents = c[i].revents;
+    return r;
+}
+
 // ---------------------------------------------------------------------------------------------------- exec
 
 static int env_is_ours(const char *e) { return pre(e, "AEMU64_"); }
@@ -690,7 +755,33 @@ static long do_exec(const char *path, char *const argv[], char *const envp[]) {
     for (u64 i = 1; i < na; i++) *a++ = argv[i];
     *a++ = 0;
     e = a;
-    for (u64 i = 0; i < ne; i++) if (!env_is_ours(envp[i])) *a++ = envp[i];
+    // (2026-11-01) libaemuxattr.so is a 32-bit library, preloaded into 32-bit programs only (QEMU_SET_ENV of the
+    // runner). A 32-bit program that starts a 64-bit one hands its LD_PRELOAD on: the 64-bit linker cannot load it
+    // and the program dies before main(). Its entries are taken out; the rest of the list stays.
+    int to64 = 0;
+    if (g_is32) {
+        unsigned char h[5] = {0}; long hf = S4(NR_openat, AT_FDCWD, host, 0x80000, 0);
+        if (hf >= 0) { if (S3(NR_read, hf, h, 5) == 5 && h[0] == 0x7f && h[4] == 2) to64 = 1; S1(NR_close, hf); }
+    }
+    static char e_pre[4200];
+    for (u64 i = 0; i < ne; i++) {
+        if (env_is_ours(envp[i])) continue;
+        if (to64 && pre(envp[i], "LD_PRELOAD=") && slen(envp[i]) < sizeof e_pre - 1) {
+            u64 o = 0; const char *p = envp[i] + 11; int kept = 0;
+            memcpy(e_pre, "LD_PRELOAD=", 11); o = 11;
+            while (*p) {
+                const char *q = p; while (*q && *q != ':') q++;
+                u64 len = (u64)(q - p); int xa = 0;
+                for (u64 k = 0; k + 13 <= len; k++) if (pre(p + k, "libaemuxattr.")) { xa = 1; break; }
+                if (!xa && len) { if (kept) e_pre[o++] = ':'; memcpy(e_pre + o, p, len); o += len; kept = 1; }
+                p = *q ? q + 1 : q;
+            }
+            e_pre[o] = 0;
+            if (kept) *a++ = e_pre;
+            continue;
+        }
+        *a++ = envp[i];
+    }
     static char e_root[540], e_props[540], e_binder[140], e_hwbinder[140], e_vndbinder[140], e_id[64], e_f[] = "AEMU64_F=1";
     memcpy(e_root, "AEMU64_ROOT=", 12); memcpy(e_root + 12, g_root, g_rootlen + 1);
     *a++ = e_root;
@@ -1218,8 +1309,14 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
         if (is_nl_fd((int)a[0])) nl_close((int)a[0]);
         if (is_binder_fd((int)a[0])) binder_closed((int)a[0]);
         if (a[0] < sizeof g_ashfd) g_ashfd[a[0]] = 0;
+        rb_closed(a[0]);
         return S1(nr, a[0]);
     }
+    case 21 /* epoll_ctl */:
+        if (rb_is(a[2])) return rb_epoll_ctl(a[0], a[1], a[2], (void *)a[3]);
+        return S4(nr, a[0], a[1], a[2], a[3]);
+    case 73 /* ppoll */:
+        return rb_ppoll(a);
     case NR_execve:
         return do_exec(P(0), (char *const *)a[1], (char *const *)a[2]);
     case NR_ioctl:
@@ -1278,6 +1375,18 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
                 // conflict exactly as they do on real maps)
                 long fd = S4(NR_openat, AT_FDCWD, hp, 02000002 /*O_RDWR|O_CLOEXEC*/, 0);
                 if (fd < 0) fd = S4(NR_openat, AT_FDCWD, hp, 02000000 /*O_RDONLY|O_CLOEXEC*/, 0);
+                // (a ring buffer, type 27, is mapped by its user: the consumer position in the first page, the producer
+                // position and the data from the second one on, the data twice over. The note is 12 bytes long, and
+                // the first access to a page past its end is a SIGBUS - netd of 17 died on its first read of a ring buffer.
+                // An empty one stands in: a memory file of the right size, every position 0, nothing ever produced)
+                u32 nt[3];
+                if (fd >= 0 && S4(NR_pread64, fd, nt, sizeof nt, 0) == (long)sizeof nt && nt[0] == 27) {
+                    long m = S2(NR_memfd_create, "aemu-ringbuf", 1 /*MFD_CLOEXEC*/);
+                    if (m >= 0) {
+                        if (S2(NR_ftruncate, m, RB_FILE) == 0) { S1(NR_close, fd); if (m < (long)sizeof g_rbfd) g_rbfd[m] = 1; return m; }
+                        S1(NR_close, m);
+                    }
+                }
                 if (fd >= 0) return fd;
             }
             return S4(NR_openat, AT_FDCWD, "/dev/null", 02000002 /*O_RDWR|O_CLOEXEC*/, 0);
@@ -1287,6 +1396,13 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
             u32 note[3], len = at[1], *info = (u32 *)*(u64 *)(at + 2);
             if (!info) return 0;
             for (u32 i = 0; i < len; i++) ((u8 *)info)[i] = 0;
+            {   // the ring buffer stand-in (see OBJ_GET): its size is the mark, and the data size is the maximum of entries
+                struct kstat rs;
+                if (len >= 20 && S2(NR_fstat, at[0], &rs) == 0 && (u64)rs.st_size == RB_FILE) {
+                    info[0] = 27; info[1] = 1; info[2] = 0; info[3] = 0; info[4] = (u32)RB_DATA;
+                    return 0;
+                }
+            }
             if (S4(NR_pread64, at[0], note, sizeof note, 0) == (long)sizeof note && len >= 20) {
                 info[0] = note[0]; info[1] = 1; info[2] = note[1]; info[3] = note[2]; info[4] = 1;   // type, id, key, value, max
             }
@@ -1675,6 +1791,8 @@ static void install_filter(void) {
     // GUEST path, i.e. to the phone's own /system, /vendor... (EACCES for an app), never into the image.
     f[n++] = JEQ(NR_faccessat2, L_TRAP, 0);
     f[n++] = JEQ(280 /* bpf */, L_TRAP, 0);
+    f[n++] = JEQ(21 /* epoll_ctl */, L_TRAP, 0);
+    f[n++] = JEQ(73 /* ppoll */, L_TRAP, 0);
     f[n++] = JEQ(NR_rt_sigprocmask, L_SIG, 0);
     f[n++] = JEQ(NR_prctl, L_PRCTL, 0);
     f[n++] = JEQ(233 /* madvise */, L_MADV, 0);

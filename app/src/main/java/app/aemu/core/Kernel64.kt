@@ -437,7 +437,7 @@ enum class Kernel64(
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 14: a copy of the kernel of 13 (its own from here on)
     A14("34", 34..34, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
-        absentFeatures = listOf("consumerir", "fingerprint", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
+        absentFeatures = listOf("consumerir", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
         // (12 has no VNDK 27 any more: the 8.1 vendor side links against the oldest one there is)
         props = mapOf("ro.treble.enabled" to "false", "bpf.progs_loaded" to "1", "ro.product.first_api_level" to "27", "debug.stagefright.c2inputsurface" to "1",
             "ro.apex.updatable" to "false", "dalvik.vm.jdwp-provider" to "none", "ro.property_service.version" to "2",
@@ -485,7 +485,7 @@ enum class Kernel64(
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 15: a copy of the kernel of 14 (its own from here on)
     A15("35", 35..35, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
-        absentFeatures = listOf("consumerir", "fingerprint", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
+        absentFeatures = listOf("consumerir", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
         // (12 has no VNDK 27 any more: the 8.1 vendor side links against the oldest one there is)
         props = mapOf("ro.treble.enabled" to "false", "bpf.progs_loaded" to "1", "ro.product.first_api_level" to "27", "debug.stagefright.c2inputsurface" to "1",
             "ro.apex.updatable" to "false", "dalvik.vm.jdwp-provider" to "none", "ro.property_service.version" to "2",
@@ -530,7 +530,7 @@ enum class Kernel64(
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 16: a copy of the kernel of 15 (its own from here on)
     A16("36", 36..36, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
-        absentFeatures = listOf("consumerir", "fingerprint", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
+        absentFeatures = listOf("consumerir", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
         // (12 has no VNDK 27 any more: the 8.1 vendor side links against the oldest one there is)
         props = mapOf("ro.treble.enabled" to "false", "bpf.progs_loaded" to "1", "ro.product.first_api_level" to "27", "debug.stagefright.c2inputsurface" to "1",
             "ro.apex.updatable" to "false", "dalvik.vm.jdwp-provider" to "none", "ro.property_service.version" to "2",
@@ -575,7 +575,7 @@ enum class Kernel64(
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 17: a copy of the kernel of 16 (its own from here on)
     A17("37", 37..37, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
-        absentFeatures = listOf("consumerir", "fingerprint", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
+        absentFeatures = listOf("consumerir", "nfc", "nfc.hce", "nfc.hcef", "bluetooth", "bluetooth_le"), trafficAccounting = true, noQemuPipe = true, binderVold = true,
         // (12 has no VNDK 27 any more: the 8.1 vendor side links against the oldest one there is)
         // (17: HintManagerService parses ro.vendor.api_level without a default; init derives it on a device, and the
         // engine's vendor side is the one of 8.1)

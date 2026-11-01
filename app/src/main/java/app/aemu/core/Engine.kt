@@ -17,6 +17,38 @@ fun isPure32Tree(root: java.io.File): Boolean =
     // (libc, not the directory: the engine makes system/lib64/egl for its own drivers on some releases)
     !java.io.File(root, "system/lib64/libc.so").isFile && !java.io.File(root, "system/bin/app_process64").isFile
 
+/**
+ * Added for AEmulator Plus (2026-11-01): a firmware that has a 32-bit side next to its 64-bit one (zygote_secondary,
+ * app_process32, the 32-bit libc). A pure 32-bit tree has one too; [isPure32Tree] only tells the two apart.
+ * The bundled libqemu_arm.so answers every extended-attribute call with ENOSYS, so the 32-bit programs of such a
+ * tree need libaemuxattr.so as well (webview_zygote: "Unable to getfilecon on /data/user: Function not implemented").
+ */
+fun has32BitSide(root: java.io.File): Boolean =
+    java.io.File(root, "system/bin/app_process32").isFile || java.io.File(root, "system/lib/libc.so").isFile ||
+        java.io.File(root, "apex/com.android.runtime/lib/bionic/libc.so").isFile
+
+/**
+ * true when the program at the guest path [program] is a 32-bit ELF (symlinks inside the tree are followed against
+ * the tree's root, not the phone's). A script, a missing file or a 64-bit program: false.
+ */
+fun isGuestElf32(root: java.io.File, program: String?): Boolean {
+    if (program == null) return false
+    var f = java.io.File(root, program.removePrefix("/"))
+    repeat(8) {
+        val p = f.toPath()
+        if (!java.nio.file.Files.isSymbolicLink(p)) return runCatching {
+            f.inputStream().use { i ->
+                val h = ByteArray(5)
+                i.read(h) == 5 && h[0] == 0x7f.toByte() && h[1] == 'E'.code.toByte() && h[2] == 'L'.code.toByte() &&
+                    h[3] == 'F'.code.toByte() && h[4] == 1.toByte()
+            }
+        }.getOrDefault(false)
+        val t = java.nio.file.Files.readSymbolicLink(p).toString()
+        f = if (t.startsWith("/")) java.io.File(root, t.removePrefix("/")) else java.io.File(f.parentFile, t)
+    }
+    return false
+}
+
 enum class Engine(
     val id: String,
     val title: String,

@@ -980,7 +980,10 @@ class TreeFixer(
         // The 32-bit installd of such a firmware gets ENOSYS from the phone's kernel for every extended-attribute call and
         // gives up on every app's data directory (installd: "Failed before getfilecon ... Function not implemented"),
         // so SettingsProvider has no database and system_server dies. A preloaded library answers those calls.
-        if (pure32) {
+        // Modified for AEmulator Plus (2026-11-01): also for a tree with a 64-bit side and a 32-bit one (One UI 9: the
+        // zygote_secondary / webview_zygote of the 32-bit side died on getfilecon, libqemu_arm.so has no xattr support).
+        // GuestRunner preloads it into 32-bit ELF programs only.
+        if (pure32 || has32BitSide(root)) {
             val asset = "engines/common/libaemuxattr.so"
             // /system/lib for programs under /system, /vendor/lib for programs under /vendor: the vendor linker namespace
             // (permitted_paths=/odm:/vendor) refuses a library from /system/lib
@@ -3292,7 +3295,13 @@ class TreeFixer(
             // the engine HALs say 2.0, so only a build that wants something else gets an adjusted copy
             val wantVer: Int? = if (name == "audio.primary.default.so" || name == "audio.primary.aosp.so") expectedHalVersion() else null
             // Sony 4.2.x firmware gralloc (extended alloc_device_t) replaced above: its libui frees buffers through device slot +0x48
-            val sonyFree = from == "gralloc.default.so" && replacedGralloc != null &&
+            // Modified for AEmulator Plus (2026-11-01): only when this firmware's libui really frees through +0x48. A bigger
+            // device alone is not enough (a MediaTek 4.2 ION gralloc has one, its libui calls +0x44, and the moved free left
+            // NULL there: SurfaceFlinger SIGSEGV pc=0 in libui).
+            val libuiSlot = if (from == "gralloc.default.so") runCatching {
+                GrallocProbe.libuiFreeSlot(File(root, "system/lib/libui.so").readBytes())
+            }.getOrNull() else null
+            val sonyFree = from == "gralloc.default.so" && replacedGralloc != null && libuiSlot != 0x44 &&
                 (GrallocProbe.allocDeviceSize(replacedGralloc) ?: 0) > GrallocProbe.AOSP_ALLOC_DEVICE_SIZE
             val halBytes: ByteArray? = if (sonyFree)
                 runCatching { eaOpen(asset).use { it.readBytes() } }.getOrNull()?.let { GrallocProbe.withFreeAtSlot48(it) }

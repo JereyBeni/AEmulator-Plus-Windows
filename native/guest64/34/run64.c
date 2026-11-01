@@ -44,6 +44,11 @@ enum {
     NR_renameat2 = 276, NR_memfd_create = 279, NR_statx = 291, NR_faccessat2 = 439,
 };
 
+// A ring buffer map of the eBPF stand-in (bpf(), OBJ_GET): the data area, and the size of the file that maps it - the
+// consumer page, the producer page and the data twice over, which is how it is mapped
+#define RB_DATA 0x40000UL
+#define RB_FILE (2 * 4096UL + 2 * RB_DATA)
+
 #define AT_FDCWD (-100)
 #define ENOENT 2
 #define ENOEXEC 8
@@ -1192,6 +1197,18 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
                 // open file, the locks then conflict exactly as they do on real maps)
                 long fd = S4(NR_openat, AT_FDCWD, hp, 02000002 /*O_RDWR|O_CLOEXEC*/, 0);
                 if (fd < 0) fd = S4(NR_openat, AT_FDCWD, hp, 02000000 /*O_RDONLY|O_CLOEXEC*/, 0);
+                // (a ring buffer, type 27, is mapped by its user: the consumer position in the first page, the producer
+                // position and the data from the second one on, the data twice over. The note is 12 bytes long, and
+                // the first access to a page past its end is a SIGBUS - netd of 17 died on its first read of a ring buffer.
+                // An empty one stands in: a memory file of the right size, every position 0, nothing ever produced)
+                u32 nt[3];
+                if (fd >= 0 && S4(NR_pread64, fd, nt, sizeof nt, 0) == (long)sizeof nt && nt[0] == 27) {
+                    long m = S2(NR_memfd_create, "aemu-ringbuf", 1 /*MFD_CLOEXEC*/);
+                    if (m >= 0) {
+                        if (S2(NR_ftruncate, m, RB_FILE) == 0) { S1(NR_close, fd); return m; }
+                        S1(NR_close, m);
+                    }
+                }
                 if (fd >= 0) return fd;
             }
             return S4(NR_openat, AT_FDCWD, "/dev/null", 02000002 /*O_RDWR|O_CLOEXEC*/, 0);
@@ -1201,6 +1218,13 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
             u32 note[3], len = at[1], *info = (u32 *)*(u64 *)(at + 2);
             if (!info) return 0;
             for (u32 i = 0; i < len; i++) ((u8 *)info)[i] = 0;
+            {   // the ring buffer stand-in (see OBJ_GET): its size is the mark, and the data size is the maximum of entries
+                struct kstat rs;
+                if (len >= 20 && S2(NR_fstat, at[0], &rs) == 0 && (u64)rs.st_size == RB_FILE) {
+                    info[0] = 27; info[1] = 1; info[2] = 0; info[3] = 0; info[4] = (u32)RB_DATA;
+                    return 0;
+                }
+            }
             if (S4(NR_pread64, at[0], note, sizeof note, 0) == (long)sizeof note && len >= 20) {
                 info[0] = note[0]; info[1] = 1; info[2] = note[1]; info[3] = note[2]; info[4] = 1;   // type, id, key, value, max
             }

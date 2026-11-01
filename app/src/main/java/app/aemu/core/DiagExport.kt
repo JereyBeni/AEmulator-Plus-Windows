@@ -543,12 +543,12 @@ object DiagExport {
             File(root, rel).listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
         for (a in File(root, "apex").listFiles()?.sortedBy { it.name }.orEmpty())
             File(a, "etc/vintf").listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
-        val bins = listOf("vendor/bin/hw", "system/vendor/bin/hw", "system/bin/hw").flatMap { d ->
+        val bins = listOf("vendor/bin/hw", "system/vendor/bin/hw", "system/bin/hw", "system_ext/bin/hw").flatMap { d ->
             File(root, d).listFiles()?.filter { it.isFile }?.map { "$d/${it.name}" }.orEmpty()
         }.sorted()
         appendLine("HAL programs in the tree (${bins.size}):"); bins.forEach { appendLine("  $it") }
         // rc services that run a program of a HAL directory
-        val rcs = (listOf("vendor/etc/init", "system/vendor/etc/init", "system/etc/init", "odm/etc/init", "system/odm/etc/init", "").flatMap { d ->
+        val rcs = (listOf("vendor/etc/init", "system/vendor/etc/init", "system/etc/init", "system_ext/etc/init", "odm/etc/init", "system/odm/etc/init", "").flatMap { d ->
             File(root, d).listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }.orEmpty()
         } + File(root, "apex").listFiles().orEmpty().flatMap { a -> File(a, "etc").listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }.orEmpty() })
         appendLine("rc services that run a HAL program:")

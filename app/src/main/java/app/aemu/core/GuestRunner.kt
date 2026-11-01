@@ -166,7 +166,11 @@ class GuestRunner(
         // and the apps that use device-protected storage (the contacts provider's calllog_shadow.db, then
         // android.process.acore) failed with "mkdir failed: ENOENT". The libc of the tree is patched instead
         // (TreeFixer.xattrNoop: a get reports one byte, a set succeeds), which marks both directories as default.
-        if (isPure32Tree(paths.root) && File(paths.root, xattrPath.removePrefix("/")).isFile &&
+        // Modified for AEmulator Plus (2026-11-01): a tree with both sides gets the preload for its 32-bit ELF programs
+        // only. LD_PRELOAD of a 32-bit library into a 64-bit program is a fatal linker error, and QEMU_SET_ENV is only
+        // read by qemu-arm anyway. (run64.c do_exec drops it again when a 32-bit program starts a 64-bit one.)
+        val xattrTarget = isPure32Tree(paths.root) || (has32BitSide(paths.root) && isGuestElf32(paths.root, program))
+        if (xattrTarget && File(paths.root, xattrPath.removePrefix("/")).isFile &&
             program?.substringAfterLast('/') != "installd") {
             val key = "DHD_ENV_LD_PRELOAD"
             val have = e[key].orEmpty().split(':').filter { it.isNotEmpty() && it != GuestPreload.XATTR && it != GuestPreload.XATTR_VENDOR }

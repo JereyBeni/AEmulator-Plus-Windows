@@ -169,7 +169,12 @@ object InitPlan {
                 // Samsung's sensorhubservice is a binder service system_server waits for without a timeout (S4/S5 TouchWiz), not a sensor daemon
                 (base == "sensorhubservice" || SKIP_BIN.none { base == it || ((it.endsWith("_") || it.length >= 5) && base.startsWith(it)) }) && !base.endsWith(".sh") &&
                 // (10+: the software codec service is a program of its APEX module)
-                (bin.startsWith("/system/bin/") || bin.startsWith("/system/xbin/") || bin.startsWith("/vendor/bin/") || bin.startsWith("/apex/")) &&
+                // Modified for AEmulator Plus (2026-11-01): 12+ keeps the HIDL ashmem allocator in system_ext. Nothing started it, so
+                // AudioFlinger waited for android.hidl.allocator@1.0::IAllocator/ashmem inside its effects factory (879 "Waited one
+                // second" lines), audioserver never answered, system_server's main thread hung in AudioSystem.setMasterBalance and
+                // the watchdog killed it after 65 s; zygote leaves with its system_server (exit 137).
+                (bin.startsWith("/system/bin/") || bin.startsWith("/system/xbin/") || bin.startsWith("/vendor/bin/") || bin.startsWith("/apex/") ||
+                    isHidlAllocator(bin)) &&
                 File(root, bin.removePrefix("/")).isFile
         }.map { sv -> GuestService(sv.name, sv.argv, sv.sockets.toMap(), delayMs = 200, optional = true,
             // the camera service connects to itself (the API 1 parameters of each camera) and trusts that call only
@@ -256,6 +261,10 @@ object InitPlan {
         if (s.name == "healthd" && s.argv.drop(1).any { HEALTHD_MODE_FLAGS.matches(it) })
             s.copy(argv = s.argv.take(1) + s.argv.drop(1).filterNot { HEALTHD_MODE_FLAGS.matches(it) })
         else s
+
+    /** The HIDL allocator service of 12+ (system_ext/bin/hw/android.hidl.allocator@1.0-service): the only system_ext program the plan starts. */
+    fun isHidlAllocator(bin: String): Boolean =
+        bin.startsWith("/system_ext/bin/hw/android.hidl.allocator@") || bin.startsWith("/system/system_ext/bin/hw/android.hidl.allocator@")
 
     private val SKIP = setOf(
         // lpm: Samsung's charging screen of a phone that is off; started like a service it powers the guest off

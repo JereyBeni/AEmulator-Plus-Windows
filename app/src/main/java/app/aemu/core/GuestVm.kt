@@ -17,6 +17,9 @@ import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.util.concurrent.CopyOnWriteArrayList
 
+/** a Java heap below this (a generic system image's 36m) cannot hold system_server of a 64-bit firmware */
+private const val MIN_JAVA_HEAP_MB = 256
+
 /** Daemons system_server cannot live without: restarted even when init.rc marks them oneshot
  * (MIUI installd dies in the LBE security hook on start). */
 private val ALWAYS_RESTART = setOf("mediaserver", "installd", "netd", "keystore")
@@ -1008,6 +1011,24 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             }
         }
         if (!props.prepare(overrides, later, if (engine == Engine.N64) kernel.propAreaSize else PropArea.SIZE)) error("property area not ready")
+        // Added for AEmulator Plus (2026-11-01). The generic system part of a firmware says a 36 MB Java heap
+        // (dalvik.vm.heapsize=36m) and only the vendor's build.prop has the phone's real sizes (see above). A tree
+        // with no vendor build.prop at all (log: "props: vendor build.prop files=[]") keeps the 36 MB, zygote starts
+        // with -Xmx36m and system_server of 14+ runs out of Java heap while it starts the third-party-apps phase:
+        // "Throwing OutOfMemoryError ... growth limit 37748736", then Process.killProcess(own pid), "Exit zygote
+        // because system server has terminated" (zygote exits with 137). A heap that small is no real device's: raise
+        // it to what a phone of this class has, unless the user picked a RAM budget (overrides already set above).
+        if (engine == Engine.N64 && img.api >= 26 && !overrides.containsKey("dalvik.vm.heapsize")) {
+            fun mb(v: String?) = v?.trim()?.removeSuffix("m")?.toIntOrNull() ?: 0
+            val heap = mb(props.get("dalvik.vm.heapsize"))
+            if (heap < MIN_JAVA_HEAP_MB) {
+                val growth = mb(props.get("dalvik.vm.heapgrowthlimit"))
+                props.put("dalvik.vm.heapsize", "512m")
+                if (growth < 192) props.put("dalvik.vm.heapgrowthlimit", "256m")
+                log("props: dalvik.vm.heapsize was ${heap}m, too small for system_server: heapsize 512m, " +
+                    "heapgrowthlimit ${props.get("dalvik.vm.heapgrowthlimit")}")
+            }
+        }
         // images imported before these defaults existed (or whose init.rc lacks them): ActivityManager needs every one of them
         if (img.api <= 15) for ((k, v) in app.aemu.importer.Analyzer.LMK_DEFAULTS) if (props.get(k).isNullOrEmpty()) props.put(k, v)
         ensureMediaProfiles()
@@ -1618,7 +1639,8 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         }
         val rcFiles = (root.listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }?.sortedBy { if (it.name == "init.rc") 0 else 1 } ?: emptyList()) +
             InitPlan.hwRcFiles(root, props) +
-            listOf("system/etc/init", "vendor/etc/init").flatMap { d -> File(root, d).listFiles()?.filter { it.name.endsWith(".rc") }?.sortedBy { it.name } ?: emptyList() } +
+            // (system_ext: the HIDL allocator's rc, see InitPlan.isHidlAllocator; the plan starts nothing else from there)
+            listOf("system/etc/init", "system_ext/etc/init", "system/system_ext/etc/init", "vendor/etc/init").flatMap { d -> File(root, d).listFiles()?.filter { it.name.endsWith(".rc") }?.sortedBy { it.name } ?: emptyList() } +
             // 11+: a module's services are declared inside the module (the software codec service)
             (File(root, "apex").listFiles()?.sortedBy { it.name }?.flatMap { m -> File(m, "etc").listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }?.sortedBy { it.name } ?: emptyList() } ?: emptyList())
         InitPlan.plan(InitPlan.parse(rcFiles, props), img.api, root).takeIf { p -> p.any { it.name == "zygote" } }
@@ -3183,6 +3205,30 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             if (all.containsKey("ro.product.$what")) continue
             val v = order.firstNotNullOfOrNull { all["ro.product.${it.trim()}.$what"]?.takeIf { s -> s.isNotEmpty() } } ?: continue
             all["ro.product.$what"] = v; later.putIfAbsent("ro.product.$what", v)
+        }
+        // Added for AEmulator Plus (2026-11-01): ro.board.platform comes from the vendor partition's build.prop, and an image
+        // without one (a system-only One UI image) has it empty. Samsung's libautils ChipVendor::getVendorName() reads it
+        // and aborts when it cannot name the chip ("ChipVendor.cpp:44 ... couldn't get chipname"): the media player of
+        // SystemUI (libaplayer, MediaCodecOutputGenerator) died on that in a loop, so SystemUI never stayed up and no
+        // activity could be shown. Where the firmware says nothing, the name is taken from its other board properties,
+        // and for the Snapdragon Galaxy S23 family (dm1q, dm2q, dm3q / SM-S911, S916, S918) from the SoC of that family.
+        if (all["ro.board.platform"].isNullOrEmpty() && later["ro.board.platform"].isNullOrEmpty()) {
+            val board = listOf("ro.product.board", "ro.hardware.chipname", "ro.boot.hardware.platform", "ro.vendor.product.board")
+                .firstNotNullOfOrNull { k -> (all[k] ?: later[k])?.takeIf { it.isNotEmpty() } }
+            // (a qssi build names the phone in ro.product.name / the model, not in ro.product.device: "samsung/dm1qxxx/qssi")
+            val ids = listOf("ro.product.device", "ro.product.name", "ro.product.system.device", "ro.product.system.name", "ro.product.model", "ro.product.system.model")
+                .mapNotNull { k -> (all[k] ?: later[k])?.takeIf { it.isNotEmpty() } }
+            val kalama = ids.any { id -> listOf("dm1q", "dm2q", "dm3q", "SM-S911", "SM-S916", "SM-S918").any { id.startsWith(it) } }
+            val soc = board ?: if (kalama) "kalama" else null
+            if (soc != null) { later["ro.board.platform"] = soc; log("props: no ro.board.platform in the firmware, set to $soc") }
+            // ro.board.platform alone did not stop it (the property reads back as kalama and ChipVendor still aborts), so
+            // it asks for another name of the chip. The usual Qualcomm ones, where the firmware has none: the chip's
+            // part number (kalama is the Snapdragon 8 Gen 2, SM8550) and the SoC manufacturer.
+            if (kalama) {
+                for ((k, v) in listOf("ro.hardware.chipname" to "SM8550", "ro.soc.manufacturer" to "QTI", "ro.soc.model" to "SM8550"))
+                    if ((all[k] ?: later[k]).isNullOrEmpty()) { later[k] = v; log("props: $k=$v (the firmware has none)") }
+            }
+            else log("props: no ro.board.platform in the firmware and no board property to take it from")
         }
         if (!all.containsKey("ro.build.fingerprint")) {
             fun p(k: String) = all[k] ?: "unknown"
