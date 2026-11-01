@@ -69,6 +69,14 @@ sh native/setupctl/build.sh
   and requires a C compiler with ASan/UBSan (no guest firmware needed).
 - `setupctl`: `aemu-setup.jar`, setup and guest rotation helpers;
   requires SDK 36/d8 and JDK 17+.
+- `native/guest64/37/hwservicemanager.c`: the HIDL service manager the engine
+  puts in a 64-bit Android 15, 16 or 17 tree that has none (installed as
+  `/system/bin/hwservicemanager` by `TreeFixer`, never over a firmware's own).
+  Built with zig, no NDK: `sh native/guest64/37/build-hwsm.sh` writes
+  `app/src/main/assets/engines/n64-37/arm64/system#bin#aemu-hwservicemanager`
+  and copies it to `n64-35/arm64` and `n64-36/arm64` (same binary).
+  Host test (fake binder driver, ASan/UBSan):
+  `cc -DAEMU_HOST_TEST -fsanitize=address,undefined -o t native/guest64/37/tests/hwsm_host_test.c && ASAN_OPTIONS=detect_leaks=0 ./t`.
 - Additional upstream source-backed scripts: `native/hostjni`, `native/apwrap`,
   `native/glsplit`, `native/gueststubs`. Read their scripts and requirements;
   do not mistake these for a complete engine build.

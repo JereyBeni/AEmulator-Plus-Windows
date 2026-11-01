@@ -27,6 +27,122 @@ object GrallocProbe {
         UNKNOWN,
     }
 
+    /** Size of the alloc_device_t that AOSP gralloc.default builds for "gpu0": hw_device_t (0x40) + alloc, free, dump + 3 reserved words... = 0x68. */
+    const val AOSP_ALLOC_DEVICE_SIZE = 0x68
+
+    /**
+     * Bytes that `gralloc_device_open` allocates (malloc + memset) for the "gpu0" device, read from the code, or null if unreadable.
+     *
+     * Sony 4.2.x (CAF) firmware ships a `gralloc.default.so` without any ION / libmemalloc reference that nevertheless builds a
+     * larger alloc_device_t (0x6c): one extra field sits in front of `alloc`, so `alloc` is stored at +0x44 and the word at
+     * +0x40, where the AOSP-layout libui calls it, stays NULL (SurfaceFlinger: SIGSEGV pc=0, lr libui+0x732f on the first
+     * GraphicBuffer allocation). The marker strings of an ION gralloc are not there, so only the layout gives it away.
+     */
+    fun allocDeviceSize(elf: ByteArray): Int? {
+      return try {
+        val d = elf
+        val b = ByteBuffer.wrap(d).order(ByteOrder.LITTLE_ENDIAN)
+        fun u32(o: Int) = b.getInt(o)
+        fun u16(o: Int) = b.getShort(o).toInt() and 0xffff
+        if (d.size < 52 || d[0] != 0x7f.toByte() || d[1] != 'E'.code.toByte() || d[4].toInt() != 1 || d[5].toInt() != 1 || u16(18) != 40) null
+        else {
+            val loads = ArrayList<IntArray>()
+            val phoff = u32(0x1c); val phent = u16(0x2a); val phnum = u16(0x2c)
+            var dynOff = -1; var dynSize = 0
+            for (i in 0 until phnum) {
+                val p = phoff + i * phent
+                if (u32(p) == 1) loads.add(intArrayOf(u32(p + 8), u32(p + 4), u32(p + 16)))
+                if (u32(p) == 2) { dynOff = u32(p + 4); dynSize = u32(p + 16) }
+            }
+            fun fo(va: Int): Int? { for (l in loads) if (va >= l[0] && va < l[0] + l[2]) return va - l[0] + l[1]; return null }
+            val tags = HashMap<Int, Int>()
+            var i = 0
+            while (dynOff >= 0 && i + 8 <= dynSize) { val t = u32(dynOff + i); if (t == 0) break; if (!tags.containsKey(t)) tags[t] = u32(dynOff + i + 4); i += 8 }
+            val symtab = fo(tags[6] ?: return null) ?: return null
+            val strtab = fo(tags[5] ?: return null) ?: return null
+            val nsym = (strtab - symtab) / 16
+            fun name(s: Int): String { var e = strtab + u32(symtab + s * 16); val st = e; while (d[e] != 0.toByte()) e++; return String(d, st, e - st, Charsets.ISO_8859_1) }
+            val hmiSym = (0 until nsym).firstOrNull { name(it) == "HMI" && u16(symtab + it * 16 + 14) != 0 } ?: return null
+            val hmi = fo(u32(symtab + hmiSym * 16 + 4)) ?: return null
+            if (u32(hmi) != 0x48574d54) return null
+            val methods = fo(u32(hmi + 20)) ?: return null      // hw_module_t.methods -> hw_module_methods_t.open
+            val open = u32(methods)
+            if ((open and 1) == 0) return null                    // Thumb only (what every 4.x gralloc is)
+            val o = fo(open and 1.inv()) ?: return null
+            // the first `movs r0,#imm8` that is immediately followed by a BL/BLX is malloc(sizeof(gralloc_context))
+            var p = 0
+            var size: Int? = null
+            while (p < 0x60 && o + p + 6 <= d.size) {
+                val h = u16(o + p); val n1 = u16(o + p + 2); val n2 = u16(o + p + 4)
+                if ((h and 0xff00) == 0x2000 && (n1 and 0xf800) == 0xf000 && (n2 and 0xc000) == 0xc000) { size = h and 0xff; break }
+                p += 2
+            }
+            size
+        }
+    } catch (_: Exception) { null }
+    }
+
+    /**
+     * The engine (AOSP-layout) gralloc with `free` moved to device slot +0x48, or null if its `gralloc_device_open` is not the
+     * known one. Sony 4.2.x libui calls `alloc` at +0x40 (as AOSP) but `free` at +0x48 (AOSP: +0x44): with the AOSP device the
+     * first freed buffer (BufferLiberator thread) calls NULL, SurfaceFlinger dies (SIGSEGV pc=0, lr libui+0x74c3) and zygote with it.
+     * The store sequence `str r0,[r4,#0x40]; mov r0,r5; add r3,pc; str r1,[r4,#0x44]; str r3,[r4,#0x3c]` becomes the same with
+     * `str r1,[r4,#0x48]` (the device is 0x68 bytes, so +0x48 is inside it).
+     */
+    fun withFreeAtSlot48(elf: ByteArray): ByteArray? {
+        val start = openFunctionOffset(elf) ?: return null
+        val want = intArrayOf(0x6420, 0x4628, 0x447b, 0x6461, 0x63e3)
+        var p = start
+        val end = minOf(start + 0x80, elf.size - 10)
+        while (p <= end) {
+            var ok = true
+            for (k in want.indices) {
+                val h = (elf[p + 2 * k].toInt() and 0xff) or ((elf[p + 2 * k + 1].toInt() and 0xff) shl 8)
+                if (h != want[k]) { ok = false; break }
+            }
+            if (ok) {
+                val out = elf.copyOf()
+                out[p + 6] = 0xa1.toByte(); out[p + 7] = 0x64   // 0x6461 -> 0x64a1: str r1,[r4,#0x48]
+                return out
+            }
+            p += 2
+        }
+        return null
+    }
+
+    /** File offset of the Thumb `gralloc_device_open` (HMI.methods->open), or null. */
+    private fun openFunctionOffset(d: ByteArray): Int? {
+        return try {
+            val b = ByteBuffer.wrap(d).order(ByteOrder.LITTLE_ENDIAN)
+            fun u32(o: Int) = b.getInt(o)
+            fun u16(o: Int) = b.getShort(o).toInt() and 0xffff
+            if (d.size < 52 || d[0] != 0x7f.toByte() || d[1] != 'E'.code.toByte() || d[4].toInt() != 1 || d[5].toInt() != 1 || u16(18) != 40) return null
+            val loads = ArrayList<IntArray>()
+            val phoff = u32(0x1c); val phent = u16(0x2a); val phnum = u16(0x2c)
+            var dynOff = -1; var dynSize = 0
+            for (i in 0 until phnum) {
+                val p = phoff + i * phent
+                if (u32(p) == 1) loads.add(intArrayOf(u32(p + 8), u32(p + 4), u32(p + 16)))
+                if (u32(p) == 2) { dynOff = u32(p + 4); dynSize = u32(p + 16) }
+            }
+            fun fo(va: Int): Int? { for (l in loads) if (va >= l[0] && va < l[0] + l[2]) return va - l[0] + l[1]; return null }
+            val tags = HashMap<Int, Int>()
+            var i = 0
+            while (dynOff >= 0 && i + 8 <= dynSize) { val t = u32(dynOff + i); if (t == 0) break; if (!tags.containsKey(t)) tags[t] = u32(dynOff + i + 4); i += 8 }
+            val symtab = fo(tags[6] ?: return null) ?: return null
+            val strtab = fo(tags[5] ?: return null) ?: return null
+            val nsym = (strtab - symtab) / 16
+            fun name(s: Int): String { var e = strtab + u32(symtab + s * 16); val st = e; while (d[e] != 0.toByte()) e++; return String(d, st, e - st, Charsets.ISO_8859_1) }
+            val hmiSym = (0 until nsym).firstOrNull { name(it) == "HMI" && u16(symtab + it * 16 + 14) != 0 } ?: return null
+            val hmi = fo(u32(symtab + hmiSym * 16 + 4)) ?: return null
+            if (u32(hmi) != 0x48574d54) return null
+            val methods = fo(u32(hmi + 20)) ?: return null
+            val open = u32(methods)
+            if ((open and 1) == 0) return null
+            fo(open and 1.inv())
+        } catch (_: Exception) { null }
+    }
+
     fun verdict(elf: ByteArray): Verdict = try {
         Analysis(elf).run()
     } catch (_: Exception) {

@@ -129,6 +129,11 @@ struct audio_stream_out {
     int (*set_volume)(struct audio_stream_out *s, float left, float right);
     long (*write)(struct audio_stream_out *s, const void *buf, size_t bytes);
     int (*get_render_position)(const struct audio_stream_out *s, uint32_t *frames);
+#if defined(AEMU_ICS) && defined(AEMU_JB41)
+    /* 4.1 stream tail on the ICS-style device (Samsung 4.1.x): AudioFlinger reads get_next_write_timestamp here and calls
+       it when it is not NULL; the out struct is calloc'ed, this slot stays 0 (without it the next field, fd, would be called) */
+    void *get_next_write_timestamp_pad;
+#endif
 #ifndef AEMU_ICS
 #ifdef AEMU_DIRECTTRACK
     /* Sony/CAF QCOM_DIRECTTRACK inserts two slots after render position.
@@ -166,6 +171,11 @@ struct audio_hw_device {
 #endif
 #ifndef AEMU_ICS
     int (*get_master_volume)(struct audio_hw_device *d, float *v);
+#ifdef AEMU_FMVOL
+    /* Sony 4.2.x (CAF) AudioFlinger: set_fm_volume sits AFTER get_master_volume (device slot 0x54), everything
+       after it is 4 bytes further than in AOSP; no open_output_session slot */
+    int (*set_fm_volume)(struct audio_hw_device *d, float v);
+#endif
 #endif
     int (*set_mode)(struct audio_hw_device *d, int mode);
     int (*set_mic_mute)(struct audio_hw_device *d, int state);
@@ -613,7 +623,7 @@ static long d_mtk_stub(void) { return 0; }
 #endif
 static int d_close(struct hw_device *dev) { free(dev); return 0; }
 
-#if !defined(AEMU_ICS) && !defined(AEMU_MTK) && !defined(AEMU_QCOM)
+#if !defined(AEMU_ICS) && !defined(AEMU_MTK) && !defined(AEMU_QCOM) && !defined(AEMU_FMVOL)
 #define AEMU_SLOTFILE 1
 /*
  * Samsung KitKat AudioFlinger calls open_output_stream at a larger offset of audio_hw_device than AOSP (108): the
@@ -658,7 +668,11 @@ static int hal_open(const struct hw_module *m, const char *id, struct hw_device 
     if (!d) return -12;
     d->common.tag = 0x48574454;          /* HARDWARE_DEVICE_TAG */
 #ifdef AEMU_ICS
+#ifdef AEMU_JB41
+    d->common.version = 0x0100;          /* 4.1: AUDIO_DEVICE_API_VERSION_1_0, ICS-style open_output_stream at +104 */
+#else
     d->common.version = 0;               /* 4.0: no device API versioning */
+#endif
 #else
     d->common.version = 0x0200;          /* AUDIO_DEVICE_API_VERSION_2_0 */
 #endif
@@ -674,6 +688,9 @@ static int hal_open(const struct hw_module *m, const char *id, struct hw_device 
 #endif
 #ifndef AEMU_ICS
     d->get_master_volume = d_get_master_volume;
+#ifdef AEMU_FMVOL
+    d->set_fm_volume = d_float_nosys;
+#endif
 #endif
     d->set_mode = d_set_mode;
     d->set_mic_mute = d_set_mic_mute;

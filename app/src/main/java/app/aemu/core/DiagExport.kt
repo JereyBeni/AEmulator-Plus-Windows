@@ -407,6 +407,18 @@ object DiagExport {
                 ", 32-bit-only tree=${isPure32Tree(p.root)}")
         }
         appendLine()
+        appendLine("-- GL drivers (where SwiftShader and the bridge are in the guest tree) --")
+        for (d in listOf("vendor/lib64/egl", "system/lib64/egl", "system/vendor/lib64/egl", "vendor/lib/egl", "system/lib/egl")) {
+            val dir = File(p.root, d)
+            val fs = dir.listFiles()?.sortedBy { it.name }
+            if (fs == null) { appendLine("$d: no such directory"); continue }
+            appendLine("$d: ${fs.size} files")
+            fs.forEach { f ->
+                val link = runCatching { java.nio.file.Files.readSymbolicLink(f.toPath()).toString() }.getOrNull()
+                appendLine("  ${f.name}: " + (if (link != null) "-> $link" + (if (f.exists()) "" else " (BROKEN)") else "${f.length()} bytes"))
+            }
+        }
+        appendLine()
         appendLine("-- HALs: what the manifest promises vs what the tree can start --")
         runCatching { append(halReport(p.root)) }.onFailure { appendLine("[failed: $it]") }
         appendLine()
@@ -523,14 +535,22 @@ object DiagExport {
             File(root, dir).listFiles()?.filter { it.isFile && it.name.startsWith("manifest_") && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
         for (rel in listOf("vendor/etc/vintf/manifest", "system/vendor/etc/vintf/manifest"))
             File(root, rel).listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
+        // Added 2026-10-31: odm and APEX manifests are read by the service manager as well; a KeyMint declared there (Android 17
+        // desktop: keystore2 "Failed to get_interface IKeyMintDevice/default: NAME_NOT_FOUND") was invisible in this listing.
+        for (rel in listOf("odm/etc/vintf/manifest.xml", "system/odm/etc/vintf/manifest.xml", "system/etc/vintf/manifest.xml", "system_ext/etc/vintf/manifest.xml", "product/etc/vintf/manifest.xml"))
+            File(root, rel).takeIf { it.isFile }?.let { manifests += it }
+        for (rel in listOf("odm/etc/vintf/manifest", "system/odm/etc/vintf/manifest", "system/etc/vintf/manifest", "system_ext/etc/vintf/manifest", "product/etc/vintf/manifest"))
+            File(root, rel).listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
+        for (a in File(root, "apex").listFiles()?.sortedBy { it.name }.orEmpty())
+            File(a, "etc/vintf").listFiles()?.filter { it.isFile && it.name.endsWith(".xml") }?.sortedBy { it.name }?.let { manifests += it }
         val bins = listOf("vendor/bin/hw", "system/vendor/bin/hw", "system/bin/hw").flatMap { d ->
             File(root, d).listFiles()?.filter { it.isFile }?.map { "$d/${it.name}" }.orEmpty()
         }.sorted()
         appendLine("HAL programs in the tree (${bins.size}):"); bins.forEach { appendLine("  $it") }
         // rc services that run a program of a HAL directory
-        val rcs = listOf("vendor/etc/init", "system/vendor/etc/init", "system/etc/init", "").flatMap { d ->
+        val rcs = (listOf("vendor/etc/init", "system/vendor/etc/init", "system/etc/init", "odm/etc/init", "system/odm/etc/init", "").flatMap { d ->
             File(root, d).listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }.orEmpty()
-        }
+        } + File(root, "apex").listFiles().orEmpty().flatMap { a -> File(a, "etc").listFiles()?.filter { it.isFile && it.name.endsWith(".rc") }.orEmpty() })
         appendLine("rc services that run a HAL program:")
         for (rc in rcs) {
             var cur: String? = null; var bin: String? = null; var flags = ArrayList<String>()
@@ -559,6 +579,10 @@ object DiagExport {
                 appendLine("  ${m.relativeTo(root).path}: $name@$v $i")
             }
         }
+        // every file of the tree's vintf and init places that mentions KeyMint, whatever the listing above made of it
+        appendLine("files that mention KeyMint (declarations and rc):")
+        for (m in manifests.distinctBy { it.path }) if (runCatching { m.readText().contains("security.keymint") }.getOrDefault(false)) appendLine("  ${m.relativeTo(root).path}")
+        for (rc in rcs.distinctBy { it.path }) if (runCatching { rc.readText().contains("keymint") }.getOrDefault(false)) appendLine("  ${rc.relativeTo(root).path}")
         appendLine("keymaster / gatekeeper / camera libraries:")
         for (d in listOf("vendor/lib/hw", "vendor/lib64/hw", "system/lib/hw", "system/lib64/hw", "system/vendor/lib/hw")) {
             File(root, d).listFiles()?.filter { f -> val n = f.name; n.contains("keymaster") || n.contains("keystore") || n.contains("gatekeeper") || n.contains("camera") }

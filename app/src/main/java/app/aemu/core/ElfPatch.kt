@@ -604,6 +604,40 @@ object ElfPatch {
         return 1
     }
 
+    /**
+     * Jelly Bean 4.2 SurfaceFlinger, no hwcomposer module (the framebuffer HAL drives the screen): the HWComposer constructor
+     * marks the displays in mAllocatedDisplayIDs only on its hwc path, so with the fb HAL alone the set stays empty, and
+     * HWComposer::eventControl() returns at its first check ("is this display allocated?") before it reaches
+     * VSyncThread::setEnabled(). The fake vsync thread then sleeps forever, every EventThread wait runs its whole 1 s and
+     * SurfaceFlinger "fakes" the vsync ("Timed out waiting for hw vsync; faking it") - the slideshow.
+     *
+     * The check is `lsrs.w r2, r0, r1 ; tst r2, r3 ; beq return` (0x80000000 >> display tested against the set). The branch
+     * becomes a nop, so an unallocated display falls through to the same code an allocated one runs: hwc call if there is a
+     * hwc, else VSyncThread::setEnabled(). Display ids are only ever 0..31 here (the first check keeps its own branch).
+     * Returns 1 when patched, 0 when the function or the pattern is not there or is already patched.
+     */
+    fun hwcEventControlWithoutAllocation(f: File): Int {
+        val name = "_ZN7android10HWComposer12eventControlEiii"
+        val d = runCatching { f.readBytes() }.getOrNull() ?: return 0
+        val v = symbolsIn(d, setOf(name))?.get(name) ?: return 0
+        if ((v shr 40) and 1L != 1L) return 0                                   // Thumb code only
+        val off = (v and 0xffffffffffL).toInt() and 1.inv()
+        fun u16(o: Int) = (d[o].toInt() and 0xff) or ((d[o + 1].toInt() and 0xff) shl 8)
+        var i = off
+        while (i + 8 <= minOf(off + 96, d.size)) {
+            // lsrs.w r2, r0, r1 (fa30 f201) ; tst r2, r3 (421a) ; beq (d0xx)
+            if (u16(i) == 0xfa30 && u16(i + 2) == 0xf201 && u16(i + 4) == 0x421a) {
+                if (u16(i + 6) == 0xbf00) return 0                               // already patched
+                if ((u16(i + 6) and 0xff00) != 0xd000) return 0                  // not a beq: a build we do not know
+                if (!f.canWrite()) f.setWritable(true, true)
+                RandomAccessFile(f, "rw").use { raf -> raf.seek((i + 6).toLong()); raf.write(byteArrayOf(0x00, 0xbf.toByte())) }
+                return 1
+            }
+            i += 2
+        }
+        return 0
+    }
+
     /** Сделать функции «return 0». Возвращает число изменённых (уже исправленные не считаются). */
     fun returnZero(f: File, names: Set<String>, includeSymtab: Boolean = false): Int =
         returnZeroMatching(f, includeSymtab) { it in names }

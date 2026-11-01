@@ -38,4 +38,9 @@ class FormFactorSkinTest {
         assertNull(skin("tablet,nosdcard", 19))
         assertNull(skin("default", 19))
     }
+    @Test fun systemDeviceDesktopIsDesktop() {
+        assertEquals("Desktop", Analyzer.formFactorSkin(mapOf("ro.product.system.device" to "desktop"), 37))
+        assertEquals("Desktop", Analyzer.formFactorSkin(mapOf("ro.product.system.device" to "Desktop ", "ro.build.characteristics" to "tablet"), 37))
+        assertNull(Analyzer.formFactorSkin(mapOf("ro.product.system.device" to "generic_x86"), 37))
+    }
 }

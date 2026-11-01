@@ -52,3 +52,9 @@ done
   -Wl,--hash-style=sysv -Wl,-z,norelro -Wl,--build-id=none -Wl,-soname,libaudio.primary.default.so \
   -o "$(dirname "$OUT")/audio.primary.mtk.so" audio_hal.c -ldl -lc
 "$BIN/llvm-strip" "$(dirname "$OUT")/audio.primary.mtk.so" 2>/dev/null || true
+# Sony 4.2.x CAF AudioFlinger: set_fm_volume right after get_master_volume (slot 0x54), see AEMU_FMVOL
+"$BIN/clang" --target=armv7a-linux-androideabi21 -march=armv7-a -mthumb -mfloat-abi=softfp -Os -fPIC -shared \
+  -nostdlib -ffreestanding -fno-builtin -fvisibility=hidden -fno-stack-protector $NOE -DAEMU_FMVOL \
+  -Wl,--hash-style=sysv -Wl,-z,norelro -Wl,--build-id=none -Wl,-soname,audio.primary.default.so \
+  -o "$(dirname "$OUT")/audio.primary.fmvol.so" audio_hal.c -lc
+"$BIN/llvm-strip" "$(dirname "$OUT")/audio.primary.fmvol.so" 2>/dev/null || true

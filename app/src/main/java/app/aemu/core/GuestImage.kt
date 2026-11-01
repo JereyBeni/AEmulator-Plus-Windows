@@ -51,6 +51,8 @@ data class VmSettings(
     val motionSensors: Boolean = false,
     /** Run the guest without any sensors; null = automatic (on for Nougat+ Wear SDK builds, see [SensorHalApi.crashesWithHostSensors]). */
     val disableSensors: Boolean? = null,
+    /** The guest's own navigation bar / taskbar (qemu.hw.mainkeys=0): plain yes/no. Set at import: yes for Android desktop builds, no for every other image. */
+    val guestNavBar: Boolean = false,
     /** With host motion sensors: 0 = disabled (real orientation), 1 = locked to 0°, 2 = locked to 180°, 3 = no gyroscope (see [GyroLock]). */
     val gyroLock: Int = GyroLock.DISABLED,
     val hostResolution: Boolean = false,
@@ -132,6 +134,13 @@ data class VmSettings(
      * otherwise killed over and over. A real deadlock is no longer recovered by a restart. Applies at the next full VM boot.
      */
     val disableWatchdog: Boolean = false,
+    /**
+     * Added for AEmulator Plus (2026-11-01). Android 14+ only, off by default. On: the engine prepares an ART boot image
+     * the guest can load in place ([CcBootImage]: the firmware's image rebuilt for this runtime, or one built from
+     * scratch for a firmware that ships none, as a GSI does). Off: nothing is built or patched and zygote is told to run
+     * without a boot image (imageless: slower start-up, but nothing of the image can fail). Applies at the next full VM boot.
+     */
+    val useArtBootImage: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("width", width).put("height", height).put("density", density)
@@ -149,7 +158,7 @@ data class VmSettings(
         .put("microphone", microphone)
         .put("bluetooth", bluetooth)
         .put("sfTombstone", sfTombstone)
-        .put("motionSensors", motionSensors).put("disableSensors", disableSensors).put("gyroLock", gyroLock).put("hostResolution", hostResolution)
+        .put("motionSensors", motionSensors).put("disableSensors", disableSensors).put("guestNavBar", guestNavBar).put("gyroLock", gyroLock).put("hostResolution", hostResolution)
         .put("skipSetupWizard", skipSetupWizard)
         .put("disableGoogleApps", disableGoogleApps)
         .put("ramMb", ramMb).put("radio", radio).put("imei", imei).put("serial", serial).put("kernel", kernel).put("kernelBranch", kernelBranch).put("kernelCommit", kernelCommit).put("kernelUser", kernelUser).put("kernelHost", kernelHost).put("kernelCompiler", kernelCompiler).put("kernelBuild", kernelBuild).put("kernelFlags", kernelFlags).put("kernelDate", kernelDate).put("baseband", baseband).put("networkType", networkType).apply { if (cdma != null) put("cdma", cdma) }.put("qemuArgs", qemuArgs).put("straceServices", straceServices)
@@ -159,6 +168,7 @@ data class VmSettings(
         .put("wifiSignal", wifiSignal).put("wifiNeighbors", wifiNeighbors)
         .put("thermalPassthrough", thermalPassthrough).put("thermalTemp", thermalTemp ?: JSONObject.NULL)
         .put("disableWatchdog", disableWatchdog)
+        .put("useArtBootImage", useArtBootImage)
 
     companion object {
         const val NAV_DEFAULT = "back,home,recents,menu"
@@ -289,6 +299,7 @@ data class VmSettings(
                 sfTombstone = o.optBoolean("sfTombstone", d.sfTombstone),
                 motionSensors = o.optBoolean("motionSensors", false),
                 disableSensors = if (o.has("disableSensors")) o.optBoolean("disableSensors") else null,
+                guestNavBar = o.optBoolean("guestNavBar", d.guestNavBar),
                 gyroLock = GyroLock.sanitize(o.optInt("gyroLock", GyroLock.DISABLED)),
                 hostResolution = o.optBoolean("hostResolution", false),
                 skipSetupWizard = o.optBoolean("skipSetupWizard", d.skipSetupWizard),
@@ -327,6 +338,7 @@ data class VmSettings(
                 thermalPassthrough = o.optBoolean("thermalPassthrough", d.thermalPassthrough),
                 thermalTemp = if (o.has("thermalTemp") && !o.isNull("thermalTemp")) o.optInt("thermalTemp").coerceIn(ThermalSysfs.MIN_MILLI_C, ThermalSysfs.MAX_MILLI_C) else null,
                 disableWatchdog = o.optBoolean("disableWatchdog", d.disableWatchdog),
+                useArtBootImage = o.optBoolean("useArtBootImage", d.useArtBootImage),
             )
         }
     }

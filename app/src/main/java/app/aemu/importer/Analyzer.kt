@@ -129,8 +129,10 @@ class Analyzer(private val ctx: Context, private val paths: VmPaths, private val
         }
 
         // kernel version of the firmware: read from the boot.img the importer stored (kernel banner -> /proc/version, uname -r)
-        val settings = runCatching { File(paths.dir, "boot.img").takeIf { it.isFile }?.readBytes() }.getOrNull()
+        val bannerSettings = runCatching { File(paths.dir, "boot.img").takeIf { it.isFile }?.readBytes() }.getOrNull()
             ?.let { BootImage.withKernelBanner(baseSettings, it) } ?: baseSettings
+        // guest taskbar/navigation bar: yes after import for Android desktop builds, no for everything else (the person can change it)
+        val settings = bannerSettings.copy(guestNavBar = skin == "Desktop")
 
         writePropsTemplate(deflt, build, api, engine, rc.setprops)
 
@@ -165,7 +167,7 @@ class Analyzer(private val ctx: Context, private val paths: VmPaths, private val
     }
 
     companion object {
-        const val VERSION = 18   // 18: ICS developer builds (sdk 13, codename IceCreamSandwich) are API 14; 17: guest architecture (GuestArch) detected from the ELF files
+        const val VERSION = 19   // 19: "Desktop" tag from ro.product.system.device=desktop; 18: ICS developer builds (sdk 13, codename IceCreamSandwich) are API 14; 17: guest architecture (GuestArch) detected from the ELF files
 
         /**
          * Form-factor tag from ro.build.characteristics: if the line contains "tv" it is Google TV below API 18 and
@@ -176,6 +178,9 @@ class Analyzer(private val ctx: Context, private val paths: VmPaths, private val
         internal fun formFactorSkin(p: Map<String, String>, api: Int): String? {
             // "oogle/glass" skips the first letter: the fingerprint may say Google or google
             if (p["ro.build.fingerprint"]?.contains("oogle/glass", ignoreCase = true) == true) return "Glass OS"
+            // Modified for AEmulator Plus (2026-10-31): Android desktop builds (Dell/Google "Googlebook" and the like) say so in
+            // ro.product.system.device. Not perfect: a beta build may carry another device name. The taskbar setting is set to yes at import (see VmSettings.guestNavBar).
+            if (p["ro.product.system.device"]?.trim()?.equals("desktop", ignoreCase = true) == true) return "Desktop"
             val line = (p["ro.build.characteristics"] ?: return null).lowercase()
             val tv = "tv" in line
             val watch = "watch" in line
@@ -256,7 +261,10 @@ class Analyzer(private val ctx: Context, private val paths: VmPaths, private val
             val paths = VmPaths(ctx, img.id)
             val fresh = runCatching { Analyzer(ctx, paths, null).analyze(img.id, img.sourceName) }.getOrNull() ?: return img
             val out = fresh.copy(
-                name = img.name, settings = img.settings, createdAt = img.createdAt, sizeBytes = img.sizeBytes,
+                name = img.name,
+                // an image imported before the "Desktop" tag existed gets the taskbar once, when it is re-recognised as desktop
+                settings = if (fresh.skin == "Desktop" && !img.skin.equals("Desktop", true)) img.settings.copy(guestNavBar = true) else img.settings,
+                createdAt = img.createdAt, sizeBytes = img.sizeBytes,
                 lastBootMs = img.lastBootMs, bootCount = img.bootCount,
                 oneTimeNote = img.oneTimeNote,
             )

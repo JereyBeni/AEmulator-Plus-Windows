@@ -178,6 +178,7 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
                 Toggle(stringResource(R.string.vs_bluetooth), stringResource(R.string.vs_bluetooth_sub), s.bluetooth) { s = s.copy(bluetooth = it) }
             }
             if (img.api >= 26) Toggle(stringResource(R.string.vs_sf_tombstone), stringResource(R.string.vs_sf_tombstone_sub), s.sfTombstone) { s = s.copy(sfTombstone = it) }
+            if (img.api >= 34) Toggle(stringResource(R.string.vs_art_boot_image), stringResource(R.string.vs_art_boot_image_sub), s.useArtBootImage) { s = s.copy(useArtBootImage = it) }
             if (img.api >= 34) Toggle(stringResource(R.string.vs_no_watchdog), stringResource(R.string.vs_no_watchdog_sub), s.disableWatchdog) { s = s.copy(disableWatchdog = it) }
             if (WifiEmu.supported(img.engine, img.api, false, false)) {
                 Toggle(stringResource(R.string.vs_wifi), stringResource(R.string.vs_wifi_sub), s.wifi) { s = s.copy(wifi = it) }
@@ -278,6 +279,7 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
             Spacer(Modifier.height(8.dp))
             Text(stringResource(R.string.vs_controls), style = MaterialTheme.typography.titleMedium)
             Toggle(stringResource(R.string.vs_nav), stringResource(R.string.vs_nav_sub), s.showNavBar) { s = s.copy(showNavBar = it) }
+            Toggle(stringResource(R.string.vs_guest_nav), stringResource(R.string.vs_guest_nav_sub), s.guestNavBar) { s = s.copy(guestNavBar = it) }
             Toggle(stringResource(R.string.vs_hide_menu), stringResource(R.string.vs_hide_menu_sub), s.hideMenuButton) { s = s.copy(hideMenuButton = it) }
             NavigationSettings(s) { s = it }
             Toggle(stringResource(R.string.vs_awake), stringResource(R.string.vs_awake_sub), s.keepScreenOn) { s = s.copy(keepScreenOn = it) }

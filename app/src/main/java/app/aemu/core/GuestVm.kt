@@ -859,9 +859,14 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         // image built for CC by the firmware's own dex2oat (CcBootImage), once, before init starts (after derive_classpath
         // below). Only when that fails, or was tried in vain before, the older route is used: libart is patched to accept
         // the image (LibArtReadBarrierPatch) and the runtime stays interpreter-only.
-        val ccRebuild = CcBootImage.pending(paths.root, img.api)
+        // Modified for AEmulator Plus (2026-11-01): all of it (the rebuild, the libart patch, the image built from scratch) is
+        // behind the VM setting "Use ART boot image" (Android 14+, off by default). Off: nothing is built or patched and the
+        // runtime is told to start without an image, see [runWithoutBootImage].
+        val bootImageOn = img.api >= 34 && s.useArtBootImage
+        if (img.api >= 34 && !bootImageOn) runWithoutBootImage { k, v -> overrides[k] = v }
+        val ccRebuild = bootImageOn && CcBootImage.pending(paths.root, img.api)
         if (ccRebuild) log("art: boot image has no read barrier: it will be rebuilt for CC before the guest starts")
-        else if (CcBootImage.needed(paths.root, img.api)) {
+        else if (bootImageOn && CcBootImage.needed(paths.root, img.api)) {
             log("art: a boot image rebuild failed before for this firmware; using the libart patch")
             applyNoReadBarrierFallback({ overrides[it] }, { k, v -> overrides[k] = v })
         }
@@ -895,7 +900,10 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             overrides["ro.SecEDS.enable"] = "false"
         }
         // своя панель кнопок у нас — экранную панель гостя (4.x) прячем, чтобы не дублировать
-        overrides["qemu.hw.mainkeys"] = if (s.showNavBar && !(engine == Engine.N64 && kernel.navBarRequired)) "1" else "0"
+        // Modified for AEmulator Plus (2026-10-31): "Enable navigation bar/taskbar" (VM setting, yes/no; set to yes at import for desktop builds)
+        // keeps the guest's own bar: without it the Android 17 desktop launcher destroys its taskbar at once
+        // ("No taskbar due to SYSUI_STATE_NAVIGATION_BAR_DISABLED").
+        overrides["qemu.hw.mainkeys"] = if (s.guestNavBar || !(s.showNavBar && !(engine == Engine.N64 && kernel.navBarRequired))) "0" else "1"
         // отладка: run/props.extra — строки ключ=значение поверх всего остального
         File(paths.bin, "props.extra").takeIf { it.isFile }?.readLines()?.forEach { l ->
             val k = l.substringBefore('=').trim()
@@ -931,7 +939,12 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         }
         // (a tree without any vendor build.prop - the engine then supplies the vendor side - is no different: the system's
         // LLNDK list is all linkerconfig has to go by)
-        val vndkLessVendor = !later.containsKey("ro.vndk.version") && llndkList &&
+        // Modified for AEmulator Plus (2026-11-01): only where the linker's namespaces come from linkerconfig (11+, trebleLinkerConfig).
+        // Android 10 has no generator: its linker reads /system/etc/ld.config.<ro.vndk.version>.txt, and with the property left
+        // unset (a GSI of 10 has llndk.libraries.29.txt and no vendor build.prop, so this used to be "vndk-less") it found no
+        // configuration at all - no runtime namespace, so libnativeloader.so (app_process, every zygote) and libandroidicu.so
+        // (bootanimation, mediaserver, audioserver, cameraserver, drmserver...) were "not found".
+        val vndkLessVendor = kernel.trebleLinkerConfig && !later.containsKey("ro.vndk.version") && llndkList &&
             (vendorProps.isNotEmpty() || File(paths.root, "apex").listFiles().orEmpty().none { it.name.startsWith("com.android.vndk.v") })
         log("props: vendor build.prop files=${vendorProps.map { it.relativeTo(paths.root).path }}, llndk list=$llndkList, vndk-less=$vndkLessVendor")
         // linkerconfig of a Baklava tree takes the vendor's API level from ro.board.api_level / ro.vendor.api_level and
@@ -1125,30 +1138,51 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         if (engine == Engine.N64 && File(paths.root, "apex/com.android.sdkext/bin/derive_classpath").isFile) runCatching {
             val out = File(paths.root, "data/system/environ/classpath")
             out.parentFile?.mkdirs(); out.delete()
-            // Modified for AEmulator Plus (2026-10-30): a Baklava tree that still reports sdk 35 / codename REL (Starnix
-            // Wear, "15/MAIN") has class path fragments whose jars say min_sdk_version "Baklava". derive_classpath then
-            // drops framework-graphics, framework-location, framework-nfc, framework-ranging, framework-virtualization and
-            // framework-crashrecovery from BOOTCLASSPATH ("not installing ... with min_sdk_version Baklava"), and
-            // zygote dies in SystemServiceRegistry (NoClassDefFoundError, no stack trace) and exits with code 0.
-            // Only the tool's own view of the codename is changed; every other process keeps the tree's properties.
-            val cpEnv = if (treeHasBaklavaClasspath()) {
-                props.privateCopy("derive_classpath", mapOf("ro.build.version.codename" to "Baklava"))?.let {
-                    log("derive_classpath: tree has Baklava-only jars, its own property copy says codename Baklava")
-                    mapOf("AEMU64_PROPS_FILE" to it.absolutePath)
-                } ?: emptyMap()
-            } else emptyMap()
-            val (code, msg) = r.run(listOf("/apex/com.android.sdkext/bin/derive_classpath", "/data/system/environ/classpath"), 30_000, cpEnv)
+            // Modified for AEmulator Plus (2026-10-31): this tree is Android 15 (sdk 35) built from the branch that became
+            // Baklava, and its class path fragments name six platform/apex jars with min_sdk_version "Baklava"
+            // (framework-graphics, -location, -nfc, -ranging, -virtualization, -crashrecovery, service-crashrecovery).
+            // derive_classpath leaves them out at sdk 35 ("not installing ... with min_sdk_version Baklava"), BOOTCLASSPATH
+            // lacks them, zygote dies in SystemServiceRegistry (NoClassDefFoundError, no stack trace) and app_process
+            // ends with exit code 0. Faking the sdk or codename for the tool does not help (tried: the property copy is
+            // ignored), and the tree stays what it is: sdk 35. What is fixed is the data: the jars are in the tree, so the
+            // fragments' own "Baklava" requirement is switched off: its protobuf tag is changed to an unused field number
+            // (same length, nothing else moves), so derive_classpath reads the jar as having no minimum. (Rewriting the value
+            // to "0000000" was tried: derive_classpath aborts with "negative version".)
+            val baklavaJars = baklavaClasspathJars()
+            val fixed = if (baklavaJars.isEmpty()) 0 else patchBaklavaFragments()
+            log("derive_classpath: sdk=${props.get("ro.build.version.sdk")} codename=${props.get("ro.build.version.codename")}, " +
+                "${baklavaJars.size} jar(s) required Baklava in the fragments, $fixed requirement(s) rewritten")
+            val (code, msg) = r.run(listOf("/apex/com.android.sdkext/bin/derive_classpath", "/data/system/environ/classpath"), 30_000)
             if (code != 0 || !out.isFile) log("derive_classpath: exit $code ${msg.trim().takeLast(300)}")
             else r.derivedExports = out.readLines().mapNotNull { l -> l.trim().split(' ', limit = 3).takeIf { it.size == 3 && it[0] == "export" }?.let { it[1] to it[2] } }.toMap()
-        }
+            // proof: every jar that was held back and is on disk must now be in one of the class paths
+            val exported = r.derivedExports.values.joinToString(":")
+            val left = baklavaJars.filter { File(paths.root, it.removePrefix("/")).isFile && it !in exported }
+            if (baklavaJars.isNotEmpty())
+                log(if (left.isEmpty()) "derive_classpath: all ${baklavaJars.size} held-back jars are in the class paths"
+                    else "✖ derive_classpath: still left out: ${left.joinToString()}; zygote will fail in SystemServiceRegistry")
+        }.onFailure { log("✖ derive_classpath: ${it.javaClass.simpleName}: ${it.message}") }
 
         // CC boot image (see CcBootImage): needs the class paths derive_classpath just wrote
+        val primary64 = primaryZygoteIs64()
         if (ccRebuild) {
-            val res = runCatching { CcBootImage.rebuild(paths.root, r, r.derivedExports, { props.get(it) }, ::log) }
+            val res = runCatching { CcBootImage.rebuild(paths.root, r, r.derivedExports, { props.get(it) }, ::log, is64 = primary64) }
                 .getOrElse { CcBootImage.Result(false, it.message ?: it.toString()) }
             if (!res.ok) {
                 log("art: falling back to the libart patch (${res.note})")
                 applyNoReadBarrierFallback({ props.get(it) }, { k, v -> props.put(k, v) })
+            }
+        }
+        // Added for AEmulator Plus (2026-11-01): a firmware with no boot image at all (a GSI): the image is built here, in place,
+        // instead of by zygote in memory (see CcBootImage.ensureScratch)
+        if (bootImageOn && primary64) {
+            val res = runCatching { CcBootImage.ensureScratch(paths.root, r, r.derivedExports, { props.get(it) }, ::log) }
+                .getOrElse { CcBootImage.Result(false, it.message ?: it.toString()) }
+            if (!res.ok) {
+                // (the same way the setting's "off" does it: an image that could not be made must not be left for zygote to
+                // compile in memory and fail on)
+                log("art: no boot image (${res.note}); the guest runs without one")
+                runWithoutBootImage { k, v -> props.put(k, v) }
             }
         }
 
@@ -1352,6 +1386,27 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
 
     @Volatile private var runnerRef: GuestRunner? = null
     val guestRunner: GuestRunner get() = runnerRef ?: runner
+
+    /** true when the primary zygote of this tree is a 64-bit program (the runtime that loads the boot image is then arm64) */
+    private fun primaryZygoteIs64(): Boolean {
+        val argv0 = img.services.firstOrNull { it.name == "zygote" }?.argv?.firstOrNull()
+        return if (argv0 != null) argv0.endsWith("app_process64") else File(paths.root, "system/bin/app_process64").isFile
+    }
+
+    /**
+     * Added for AEmulator Plus (2026-11-01). Android 14+, setting "Use ART boot image" off (or no image could be made):
+     * zygote starts without a boot image. Two properties do it, both read by AndroidRuntime::startVm:
+     *  - dalvik.vm.boot-image -> -Ximage:<file that does not exist>, so the firmware's own image (valid or not) is not used;
+     *  - dalvik.vm.image-dex2oat-flags -> -Ximage-compiler-option <unknown flag>, so the compile zygote would otherwise run in
+     *    memory when it finds no image (the one that dies relocating it) is refused by dex2oat at once, and ART takes the
+     *    path it takes whenever that compile fails: imageless running ("Attempting to fall back to imageless running").
+     * Classes are then loaded from the dex files, which makes start-up slower; the system watchdog setting helps a slow boot.
+     */
+    private fun runWithoutBootImage(put: (String, String) -> Unit) {
+        put("dalvik.vm.boot-image", "/system/framework/aemu-no-boot-image.art")
+        put("dalvik.vm.image-dex2oat-flags", "--aemu-no-boot-image")
+        log("art: boot image off: the guest runs without one (setting \"Use ART boot image\")")
+    }
 
     /**
      * The libart patch route for a 14+ firmware whose boot image has no read barrier (what CcBootImage replaces):
@@ -1587,7 +1642,7 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         }
         // a TEE KeyMint (MediaTek/Trustonic/OP-TEE client) aborts at once without a secure world, and a keymint left declared
         // in the manifests makes keystore2 panic: the program is never started, keystore2 runs its software KeyMint
-        if (engine == Engine.N64 && kernel.treble && Regex("^android\\.hardware\\.security\\.keymint@[0-9.]+-service(\\..*)?$")
+        if (engine == Engine.N64 && kernel.treble && Regex("^android\\.hardware\\.security\\.keymint(@[0-9.]+-service(\\..*)?|-service([.-]qti)?)$")
                 .matches(svc.argv.first().substringAfterLast('/'))) {
             log("· ${svc.name}: TEE KeyMint, skipped (keystore2 uses its software KeyMint)")
             return
@@ -1633,6 +1688,10 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             // (several directories: "a:b", searched in that order)
             val dirs = dir.split(':').filter { File(paths.root, it).isDirectory }
             if (dirs.isNotEmpty()) extra["AEMU64_LIBPATH"] = dirs.joinToString(":") { "/$it" }
+            // Added for AEmulator Plus (2026-10-31). The audio@7.0 impl links to libhidlbase functions the 15+ firmware no longer
+            // exports (details::check, logError, errorWriteLog): the engine's dependency-free stand-in (native/audiohal/hidlcompat.c)
+            // is preloaded into this one service so that the impl's dlopen finds them
+            dirs.map { "$it/libaemu_hidlcompat.so" }.firstOrNull { File(paths.root, it).isFile }?.let { extra["LD_PRELOAD"] = "/$it" }
         }
         spawn(svc.name, guestRunner.cmdline(argv, props), guestRunner.env(extra, svc.argv.first()))
     }
@@ -1869,20 +1928,69 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
     }
 
     /**
-     * True when the tree's class path fragments (system/etc/classpaths, apex/<name>/etc/classpaths) name a jar with
-     * min_sdk_version "Baklava" while the properties say an earlier release that is not the Baklava preview itself:
-     * derive_classpath would leave those jars out. A tree that really reports sdk 36+ or codename Baklava is left alone.
+     * The jars that the tree's class path fragments (system/etc/classpaths, apex/<name>/etc/classpaths) declare with
+     * min_sdk_version "Baklava". Those are the ones derive_classpath leaves out on a tree whose properties are not
+     * Baklava. The fragments are protobuf: a message of jars, each jar a message holding its strings (path, min sdk).
      */
-    private fun treeHasBaklavaClasspath(): Boolean {
-        val sdk = props.get("ro.build.version.sdk")?.toIntOrNull() ?: return false
-        if (sdk >= 36 || props.get("ro.build.version.codename") == "Baklava") return false
-        val dirs = listOf(File(paths.root, "system/etc/classpaths")) +
-            File(paths.root, "apex").listFiles().orEmpty().map { File(it, "etc/classpaths") }
-        return dirs.any { d ->
-            d.listFiles().orEmpty().any { f ->
-                f.isFile && f.name.endsWith(".pb") && runCatching { String(f.readBytes(), Charsets.ISO_8859_1).contains("Baklava") }.getOrDefault(false)
+    private val UNUSED_FIELD_TAG = (15 shl 3) or 2
+
+    private fun classpathFragments(): List<File> =
+        (listOf(File(paths.root, "system/etc/classpaths")) +
+            File(paths.root, "apex").listFiles().orEmpty().map { File(it, "etc/classpaths") })
+            .flatMap { d -> d.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".pb") } }
+
+    private fun baklavaClasspathJars(): List<String> {
+        val out = LinkedHashSet<String>()
+        for (f in classpathFragments()) {
+            val b = runCatching { f.readBytes() }.getOrNull() ?: continue
+            collectBaklavaJars(b, 0, b.size, 0, out, null)
+        }
+        return out.toList()
+    }
+
+    /** Turns every min_sdk_version "Baklava" (or the "0000000" an earlier build wrote) into an unknown protobuf field; returns how many were changed. */
+    private fun patchBaklavaFragments(): Int {
+        var n = 0
+        for (f in classpathFragments()) {
+            val b = runCatching { f.readBytes() }.getOrNull() ?: continue
+            val fixed = IntArray(1)
+            collectBaklavaJars(b, 0, b.size, 0, LinkedHashSet(), fixed)
+            if (fixed[0] > 0 && runCatching { f.writeBytes(b) }.isSuccess) n += fixed[0]
+        }
+        return n
+    }
+
+    private fun collectBaklavaJars(b: ByteArray, from: Int, to: Int, depth: Int, out: MutableSet<String>, fixed: IntArray?) {
+        var i = from
+        fun varint(): Long {
+            var v = 0L; var sh = 0
+            while (i < to && sh < 64) { val c = b[i++].toInt(); v = v or ((c and 0x7f).toLong() shl sh); sh += 7; if (c and 0x80 == 0) return v }
+            return -1
+        }
+        val fields = ArrayList<IntArray>()
+        while (i < to) {
+            val tagAt = i
+            val tag = varint(); if (tag < 0) return
+            when ((tag and 7).toInt()) {
+                0 -> if (varint() < 0) return
+                1 -> i += 8
+                5 -> i += 4
+                2 -> { val n = varint(); if (n < 0 || i + n > to) return; fields.add(intArrayOf(i, i + n.toInt(), tagAt)); i += n.toInt() }
+                else -> return
             }
         }
+        val strings = fields.map { String(b, it[0], it[1] - it[0], Charsets.ISO_8859_1) }
+        val marked = strings.indices.filter { strings[it] == "Baklava" || strings[it] == "0000000" }
+        if (marked.isNotEmpty()) {
+            strings.filter { it.startsWith("/") && it.endsWith(".jar") }.forEach { out.add(it) }
+            if (fixed != null) for (k in marked) {
+                // a one-byte tag (field number < 16) of wire type 2; field 15 is not used by the jar message
+                val at = fields[k][2]; val tag = b[at].toInt() and 0xff
+                if (tag == UNUSED_FIELD_TAG || tag >= 0x80 || (tag and 7) != 2) continue
+                b[at] = UNUSED_FIELD_TAG.toByte(); fixed[0]++
+            }
+        }
+        if (depth < 3) for (fl in fields) if (fl[1] > fl[0]) collectBaklavaJars(b, fl[0], fl[1], depth + 1, out, fixed)
     }
 
     /**
@@ -2224,6 +2332,7 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             runCatching { guestShell("cmd webviewupdate disable-multiprocess", 30_000) }
         TreeFixer(ctx, paths, img, ::log).noScreenSleep()
         disableBrokenComponents()
+        if (img.api >= 34) runCatching { switchToFullUserOnHsum() }.onFailure { log("headless system user check failed: $it") }
         if (img.api >= 24) runCatching { enableHome() }.onFailure { log("home screen check failed: $it") }
         runCatching {
             ImageStore.update(ctx, img.id) { it.copy(lastBootMs = bootDoneAt - bootAt, bootCount = it.bootCount + 1) }
@@ -2264,6 +2373,80 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         log("first boot: restarting the system past the setup wizard ($wizard)")
         synchronized(procs) { procs["zygote"] }?.let { z -> pidOf(z)?.let { runCatching { AProcess.sendSignal(it, 9) } } }
         return true
+    }
+
+    /**
+     * Modified for AEmulator Plus (2026-10-31): a firmware in headless system user mode (HSUM: Android desktop / Googlebook
+     * images) keeps the system user (0) for services only, and the system refuses every activity of it: "Activity
+     * com.google.android.apps.nexuslauncher/.NexusLauncherActivity not allowed for system user" (START result code -88).
+     * The people-facing user is a full user (10 here) that a real device switches to at its login screen; here nothing logs
+     * in, the guest stays on user 0 and no app can start (it looks like a permission error, but no file permission is
+     * involved). The system is asked for the HSUM mode, and when it is on and the current user is the system user, the
+     * first full, usable user is switched to. With no such user nothing is created here: that is said in the log.
+     */
+    private fun switchToFullUserOnHsum() {
+        val hsum = guestShell("cmd user is-headless-system-user-mode 2>/dev/null; getprop ro.fw.mu.headless_system_user", 30_000)
+            .lines().any { it.trim() == "true" }
+        if (!hsum) return
+        val cur = guestShell("am get-current-user", 30_000).trim().toIntOrNull() ?: return
+        if (cur != 0) return
+        // "\tUserInfo{10:Name:4c13} running": the number after the second colon is the flag word (hex)
+        val flagsOf = Regex("""UserInfo\{(\d+):[^:}]*:([0-9a-fA-F]+)\}""")
+        val full = 0x400; val guest = 0x4; val profile = 0x1000; val disabled = 0x40; val demo = 0x200; val system = 0x800
+        val candidates = flagsOf.findAll(guestShell("pm list users", 30_000)).mapNotNull { m ->
+            val id = m.groupValues[1].toInt(); val f = m.groupValues[2].toInt(16)
+            if (id == 0 || f and full == 0 || f and (guest or profile or disabled or demo or system) != 0) null else id to f
+        }.toList()
+        // (the main user first, then an admin, then the lowest id)
+        val pick = candidates.sortedWith(compareByDescending<Pair<Int, Int>> { it.second and 0x4000 != 0 }
+            .thenByDescending { it.second and 0x2 != 0 }.thenBy { it.first }).firstOrNull()?.first
+        if (pick == null) { log("headless system user mode: the system user is current and there is no full user to switch to"); return }
+        log("headless system user mode: the system user cannot run activities, switching to user $pick")
+        prepareUserDirs(pick)
+        val out = guestShell("am switch-user -w $pick", 90_000).trim()
+        if (out.isNotEmpty()) log("switch-user $pick: ${out.lines().take(3).joinToString(" | ")}")
+        reportUserState(pick)
+    }
+
+    /**
+     * Added for AEmulator Plus (2026-10-31): the per-user directories that TreeFixer.makeUserZeroLink() makes for user 0 (the
+     * guest has no vold to prepare them), made for the full user picked above. Only called for a user that "pm list users"
+     * reported, so a tree without such a user gets nothing. Without them installd fails with "Failed to prepare
+     * /data/misc/profiles/cur/10/<pkg>: No such file or directory" for every package of that user.
+     */
+    private fun prepareUserDirs(id: Int) {
+        val data = File(paths.root, "data")
+        val made = ArrayList<String>()
+        for (d in listOf("user/$id", "user_de/$id", "misc_ce/$id", "misc_de/$id", "system_ce/$id", "system_de/$id", "media/$id",
+                "misc/profiles/cur/$id")) {
+            val dir = File(data, d)
+            val existed = dir.isDirectory
+            runCatching { dir.mkdirs() }
+            if (!dir.isDirectory) { log("user $id: /data/$d could not be created"); continue }
+            // every parent up to data/ must stay traversable for app uids as well (the guest reads the host mode bits)
+            var p: File? = dir
+            while (p != null && p != data) { TreeFixer.makeTraversable(p); p = p.parentFile }
+            if (!existed) made += d
+        }
+        log("user $id: per-user directories " + if (made.isEmpty()) "already there" else "created (${made.joinToString(", ")})")
+    }
+
+    /** Diagnostics: whether the user the guest switched to reached the unlocked state, and what its state looks like if not. */
+    private fun reportUserState(id: Int) {
+        var state = ""
+        for (i in 0 until 10) {
+            state = guestShell("am get-started-user-state $id 2>&1", 15_000).trim().lines().lastOrNull().orEmpty()
+            if (state.contains("RUNNING_UNLOCKED")) break
+            Thread.sleep(2_000)
+        }
+        if (state.contains("RUNNING_UNLOCKED")) { log("user $id: unlocked ($state)"); return }
+        log("user $id: NOT unlocked after the switch (state: ${state.ifEmpty { "unknown" }})")
+        val dirs = listOf("user/$id", "user_de/$id", "misc_ce/$id", "misc_de/$id", "system_ce/$id", "system_de/$id", "media/$id", "misc/profiles/cur/$id")
+            .joinToString(" ") { "/data/$it" }
+        log("user $id: " + guestShell("pm list users 2>&1 | tr '\\n' ' '; echo; ls -ld $dirs 2>&1; " +
+            "getprop sys.user.$id.ce_available; getprop sys.boot_completed; getprop ro.crypto.state", 30_000).trim().lines().joinToString(" | "))
+        log("user $id: " + guestShell("logcat -d -v brief -t 4000 2>&1 | grep -i -E 'user $id|userId=$id|UserController|unlockUserKey|StorageManagerService|UserDataPreparer|onBeforeUnlockUser' | tail -25", 30_000)
+            .trim().lines().joinToString("\n  "))
     }
 
     /**
@@ -2358,6 +2541,9 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
                             }
                             log("dev/socket when $name exited (code $code): ${rows ?: "directory missing"}")
                         }
+                        // app_process leaves with 0 when ZygoteInit.main ended in an uncaught Java exception (AndroidRuntime::start
+                        // returns normally after it), so "code 0" here means "see the zygote log", not "a clean exit"
+                        if (code == 0) log("zygote: exit code 0 is how app_process ends after an uncaught exception in ZygoteInit; the cause is in the guest log (zygote.log), e.g. NoClassDefFoundError = a jar missing from BOOTCLASSPATH")
                         // 2.x with "Phone GPU" off: the firmware's software renderer (pixelflinger, libGLES_android.so) crashes
                         // under qemu inside SurfaceFlinger, which lives in system_server, so zygote dies with 137 on every boot
                         // and the loop never ends. The GL bridge is the working path: switch it on and restart the VM once.

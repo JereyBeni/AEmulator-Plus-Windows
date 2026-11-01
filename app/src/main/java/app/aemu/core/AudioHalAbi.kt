@@ -206,7 +206,9 @@ object AudioHalAbi {
                                     var imm = -1
                                     if ((g shr 11) == 0b01101 && (g and 7) == rm) imm = ((g shr 6) and 31) * 4
                                     else if ((g and 0xfff0) == 0xf8d0 && j + 2 < p && (u16(j + 2) shr 12) == rm) imm = u16(j + 2) and 0xfff
-                                    if (imm in 96..160 && imm > best) best = imm
+                                    // the lowest device slot called in openOutput is open_output_stream: close_output_stream (the next
+                                    // slot, called on the error path) must not win, or an ICS-style +104 device reads as +108
+                                    if (imm in 100..160 && (best < 0 || imm < best)) best = imm
                                     j += 2
                                 }
                             }
@@ -220,4 +222,68 @@ object AudioHalAbi {
         }
         null
     }.getOrNull()
+
+    /**
+     * Sony 4.2.x (CAF) AudioFlinger: audio_hw_device has set_fm_volume right after get_master_volume (+0x54), so set_mode,
+     * set_mic_mute, ... open_output_stream (+0x70) ... get_master_mute (+0x88) are all 4 bytes further than in AOSP, and
+     * there is no open_output_session slot. Read from the code: AudioFlinger::setFmVolume calls slot 84 and
+     * AudioFlinger::setMode slot 88 (AOSP: set_mode at 84), with setMasterVolume still at 76 and setVoiceVolume at 72.
+     */
+    fun hasFmVolumeAfterMasterVolume(elf: ByteArray): Boolean = runCatching {
+        val fm = deviceSlots(elf, "_ZN7android12AudioFlinger11setFmVolumeEf")
+        val mode = deviceSlots(elf, "_ZN7android12AudioFlinger7setModeE12audio_mode_t")
+        val master = deviceSlots(elf, "_ZN7android12AudioFlinger15setMasterVolumeEf")
+        84 in fm && 88 in mode && 84 !in mode && 76 in master
+    }.getOrDefault(false)
+
+    /** Device-struct offsets (as `ldr rX,[rY,#imm]`, imm 60..160) read by the exported Thumb function whose name starts with [prefix]. */
+    private fun deviceSlots(elf: ByteArray, prefix: String): Set<Int> {
+        fun u16(o: Int) = (elf[o].toInt() and 0xff) or ((elf[o + 1].toInt() and 0xff) shl 8)
+        fun u32(o: Int) = u16(o) or (u16(o + 2) shl 16)
+        if (elf.size < 52 || elf[0] != 0x7f.toByte() || elf[1] != 'E'.code.toByte() || elf[4] != 1.toByte()) return emptySet()
+        val phoff = u32(0x1c); val phentsize = u16(0x2a); val phnum = u16(0x2c)
+        val shoff = u32(0x20); val shentsize = u16(0x2e); val shnum = u16(0x30)
+        fun fileOffset(vaddr: Int): Int? {
+            for (i in 0 until phnum) {
+                val ph = phoff + i * phentsize
+                if (u32(ph) != 1) continue
+                val off = u32(ph + 4); val va = u32(ph + 8); val filesz = u32(ph + 16)
+                if (vaddr >= va && vaddr < va + filesz) return vaddr - va + off
+            }
+            return null
+        }
+        val out = HashSet<Int>()
+        for (i in 0 until shnum) {
+            val sh = shoff + i * shentsize
+            if (u32(sh + 4) != 11) continue
+            val symOff = u32(sh + 16); val symSize = u32(sh + 20)
+            val strOff = u32(shoff + u32(sh + 24) * shentsize + 16)
+            var sym = symOff
+            while (sym + 16 <= symOff + symSize) {
+                val nameOff = strOff + u32(sym)
+                val value = u32(sym + 4); val size = u32(sym + 8)
+                if ((elf[sym + 12].toInt() and 0xf) == 2 && size > 0 && (value and 1) == 1) {
+                    var e = nameOff
+                    while (e < elf.size && elf[e].toInt() != 0) e++
+                    if (String(elf, nameOff, e - nameOff, Charsets.ISO_8859_1).startsWith(prefix)) {
+                        val start = fileOffset(value and 1.inv()) ?: return out
+                        var p = start
+                        val end = minOf(start + size, elf.size - 4)
+                        while (p < end) {
+                            val g = u16(p)
+                            val imm = when {
+                                (g shr 11) == 0b01101 -> ((g shr 6) and 31) * 4                   // ldr Rt,[Rn,#imm5*4]
+                                (g and 0xfff0) == 0xf8d0 -> u16(p + 2) and 0xfff                 // ldr.w Rt,[Rn,#imm12]
+                                else -> -1
+                            }
+                            if (imm in 60..160) out.add(imm)
+                            p += if ((g and 0xf800) >= 0xe800) 4 else 2
+                        }
+                    }
+                }
+                sym += 16
+            }
+        }
+        return out
+    }
 }

@@ -69,4 +69,58 @@ class CcBootImageTest {
         File(dir, "boot.art").writeBytes(header(0x1000, 2, 0x70000000, 100).copyOf(200))
         assertEquals("only 0 of 1 component images were written", CcBootImage.verify(tmp.root, dir, 2, 0x70000000L, 0))
     }
+
+    // ---- the boot image built from scratch for a firmware that ships none (2026-11-01) ----
+
+    private fun mark(root: File, text: String) = File(root, "data/.aemu-art-bootimage").apply { parentFile!!.mkdirs() }.writeText(text)
+    private fun ourOat(root: File) = File(root, "system/framework/arm64/boot.oat").apply { parentFile!!.mkdirs() }.writeBytes(ByteArray(8) { 1 })
+
+    @Test fun scratchPlanBuildsWhenThereIsNoImageAtAll() {
+        assertEquals("build", CcBootImage.scratchPlan(tmp.root, "sig"))
+    }
+
+    @Test fun scratchPlanLeavesTheFirmwaresOwnImageToRebuild() {
+        ourOat(tmp.root) // an image in the firmware's directory, no mark of ours
+        assertEquals("keep", CcBootImage.scratchPlan(tmp.root, "sig"))
+        assertFalse(CcBootImage.ownsImage(tmp.root))
+    }
+
+    @Test fun scratchPlanKeepsOursUntilABootJarChanges() {
+        ourOat(tmp.root)
+        mark(tmp.root, CcBootImage.scratchMark("sig", "ok"))
+        assertEquals("keep", CcBootImage.scratchPlan(tmp.root, "sig"))
+        assertTrue(CcBootImage.ownsImage(tmp.root))
+        assertEquals("build", CcBootImage.scratchPlan(tmp.root, "other-jars"))
+    }
+
+    @Test fun scratchPlanDoesNotRetryTheSameFailure() {
+        mark(tmp.root, CcBootImage.scratchMark("sig", "failed", "boom"))
+        assertEquals("failed", CcBootImage.scratchPlan(tmp.root, "sig"))
+        assertEquals("build", CcBootImage.scratchPlan(tmp.root, "changed"))
+        assertFalse(CcBootImage.ownsImage(tmp.root))
+    }
+
+    @Test fun ownImageIsNotRebuiltForTheOldFirmwaresReadBarrierState() {
+        ourOat(tmp.root)
+        mark(tmp.root, CcBootImage.scratchMark("sig", "ok"))
+        assertFalse(CcBootImage.needed(tmp.root, 36))
+    }
+
+    @Test fun scratchImageIsNotJudgedByItsReadBarrierKey() {
+        val dir = tmp.newFolder("arm64")
+        File(dir, "boot.art").writeBytes(header(0x1000, 2, 0x70000000, 100).copyOf(200))
+        File(dir, "boot.oat").writeBytes(ByteArray(10) { 1 }); File(dir, "boot.vdex").writeBytes(ByteArray(10) { 1 })
+        File(dir, "boot-framework.art").writeBytes(ByteArray(10) { 1 })
+        assertEquals("the new boot.oat still has no read barrier", CcBootImage.verify(tmp.root, dir, 2, 0x70000000L, 0))
+        assertNull(CcBootImage.verify(tmp.root, dir, 2, 0x70000000L, 0, requireCc = false))
+    }
+
+    @Test fun primaryArgsFor64BitRuntime() {
+        val a = CcBootImage.primaryArgs("/apex/com.android.art/bin/dex2oat64", listOf("/apex/a.jar"), "/system/framework/arm64", 0x70000000L,
+            "cortex-a53", "a53,crc", null, 2, null, "arm64")
+        assertTrue(a.contains("--instruction-set=arm64"))
+        assertTrue(a.contains("--image=/system/framework/arm64/boot.art"))
+        assertTrue(a.contains("--base=0x70000000"))
+        assertFalse(a.contains("--instruction-set=arm"))
+    }
 }

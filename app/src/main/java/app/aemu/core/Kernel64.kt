@@ -497,6 +497,11 @@ enum class Kernel64(
             "debug.renderengine.backend" to "gles",
             // (15 has the Skia one only; the drawings it makes at start to fill its shader cache crash SwiftShader)
             "service.sf.prime_shader_cache" to "0",
+            // Added for AEmulator Plus (2026-10-31). A Wear image has no vendor build.prop, so nothing sets the vendor API level
+            // and HintManagerService of system_server gets no SupportInfo ("NullPointerException ... SupportInfo.headroom",
+            // "Failed to create service HintManagerService", system_server dies, zygote is restarted): as on 17, the engine's
+            // vendor side is the one of 8.1.
+            "ro.vendor.api_level" to "27",
             // (a generic image asks init to copy its second slot's preopt files and waits 100 s for an answer)
             "ro.cp_system_other_odex" to "0",
             // (netd of 15 waits for init to report that the network BPF loader has finished)
@@ -516,7 +521,7 @@ enum class Kernel64(
         sysFiles = mapOf("android_lcd/lcd_name" to "aemu\n",
             // (netd of 15 also looks for the mark the network BPF loader leaves when it is done)
             "fs/bpf/netd_shared/mainline_done" to ""),
-        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, gpuBridge64 = true, syncLog = true, cgroupRcDepth = true, apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio"), bootHardwareProp = true,
+        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, gpuBridge64 = true, syncLog = true, cgroupRcDepth = true, apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio:vendor/lib64/aemu-vndk"), bootHardwareProp = true,
         firmwareOwn = listOf("vendor#bin#hw#android.hardware.media.omx@1.0-service", "vendor#etc#init#android.hardware.media.omx@1.0-service.rc",
             "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so",
             // (the empty libhidltransport and libhwbinder of 10+, which the engine's HALs of 9 still name: a vendor side
@@ -537,6 +542,11 @@ enum class Kernel64(
             "debug.renderengine.backend" to "gles",
             // (15 has the Skia one only; the drawings it makes at start to fill its shader cache crash SwiftShader)
             "service.sf.prime_shader_cache" to "0",
+            // 16: HintManagerService (system_server) does Integer.parseInt(ro.vendor.api_level) with no default; on a device init
+            // derives it from the vendor build.prop, and this image has none ("NumberFormatException: For input string: \"\"",
+            // "Failed to create service HintManagerService", system_server dies, zygote is killed). As on 15 and 17, the engine's
+            // vendor side is the one of 8.1.
+            "ro.vendor.api_level" to "27",
             // (a generic image asks init to copy its second slot's preopt files and waits 100 s for an answer)
             "ro.cp_system_other_odex" to "0",
             // (netd of 15 waits for init to report that the network BPF loader has finished)
@@ -556,7 +566,7 @@ enum class Kernel64(
         sysFiles = mapOf("android_lcd/lcd_name" to "aemu\n",
             // (netd of 15 also looks for the mark the network BPF loader leaves when it is done)
             "fs/bpf/netd_shared/mainline_done" to ""),
-        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, syncLog = true, cgroupRcDepth = true, standInServices = mapOf("android.hardware.power.IPower/default" to "system/lib64/libpowermanager.so#android.hardware.power-V"), gpuBridge64 = true, cgroupUidParents = listOf("system", "apps"), apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio"), bootHardwareProp = true,
+        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, syncLog = true, cgroupRcDepth = true, standInServices = mapOf("android.hardware.power.IPower/default" to "system/lib64/libpowermanager.so#android.hardware.power-V"), aconfigStorage = true, gpuBridge64 = true, cgroupUidParents = listOf("system", "apps"), apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio:vendor/lib64/aemu-vndk"), bootHardwareProp = true,
         firmwareOwn = listOf("vendor#bin#hw#android.hardware.media.omx@1.0-service", "vendor#etc#init#android.hardware.media.omx@1.0-service.rc",
             "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so",
             // (the empty libhidltransport and libhwbinder of 10+, which the engine's HALs of 9 still name: a vendor side
@@ -574,9 +584,13 @@ enum class Kernel64(
             "persist.zygote.app_data_isolation" to "false",
             // (a vendor's firmware: as on 11)
             "pm.dexopt.first-boot" to "extract", "pm.dexopt.boot" to "extract", "ro.hardware.egl" to "swiftshader", "ro.frp.pst" to "",
-            // SurfaceFlinger of 12 composes with Skia by default, which draws nothing over SwiftShader: the GLES
-            // composer of the releases before is still in it
-            "debug.renderengine.backend" to "gles",
+            // Modified for AEmulator Plus (2026-10-31): 17 has no "gles" backend any more (the value is ignored) and takes
+            // Graphite over Vulkan by default. That one loads the board's Adreno Vulkan driver, which asks the mapper for
+            // Qualcomm's own metadata ("Failed to get Metadata - IS_CACHED", "GetGrallocHandleFormat ... failed! (error 7)")
+            // that the engine's gralloc does not have; the AHardwareBuffer then maps to VkFormat 0 and SurfaceFlinger aborts
+            // ("Failed to create a valid texture", Skia "cannot render to (VkFormat: 0)"). Skia over GL goes through EGL,
+            // the engine's bridge or SwiftShader, as hwui already does (debug.hwui.renderer=skiagl on this engine)
+            "debug.renderengine.backend" to "skiaglthreaded",
             // (15 has the Skia one only; the drawings it makes at start to fill its shader cache crash SwiftShader)
             "service.sf.prime_shader_cache" to "0",
             // (a generic image asks init to copy its second slot's preopt files and waits 100 s for an answer)
@@ -598,7 +612,7 @@ enum class Kernel64(
         sysFiles = mapOf("android_lcd/lcd_name" to "aemu\n",
             // (netd of 15 also looks for the mark the network BPF loader leaves when it is done)
             "fs/bpf/netd_shared/mainline_done" to ""),
-        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, syncLog = true, cgroupRcDepth = true, standInServices = mapOf("android.hardware.power.IPower/default" to "system/lib64/libpowermanager.so#android.hardware.power-V"), aconfigStorage = true, kernelPolicyUnread = true, gpuBridge64 = true, cgroupUidParents = listOf("system", "apps"), apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio"), bootHardwareProp = true,
+        ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, linkerConfigTool = "apex/com.android.runtime/bin/linkerconfig", mediaProfilesFallback = true, manifestFragmentsKept = listOf("health", "aemu-"), oneFingerprint = true, vendorHeapProps = true, ownVendorUnderGsi = true, odmManifestFragmentsAside = true, lazyAidlServices = true, ramBudget = true, syncLog = true, cgroupRcDepth = true, standInServices = mapOf("android.hardware.power.IPower/default" to "system/lib64/libpowermanager.so#android.hardware.power-V"), aconfigStorage = true, kernelPolicyUnread = true, gpuBridge64 = true, cgroupUidParents = listOf("system", "apps"), apexStandIn = true, webView64 = true, ownLibDirs = mapOf("vendor#bin#hw#android.hardware.audio.service" to "vendor/lib64/aemu-audio:vendor/lib64/aemu-vndk"), bootHardwareProp = true,
         firmwareOwn = listOf("vendor#bin#hw#android.hardware.media.omx@1.0-service", "vendor#etc#init#android.hardware.media.omx@1.0-service.rc",
             "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so",
             // (the empty libhidltransport and libhwbinder of 10+, which the engine's HALs of 9 still name: a vendor side

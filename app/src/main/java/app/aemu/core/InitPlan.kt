@@ -346,7 +346,12 @@ object InitPlan {
      * its .rc entry): artd of 14+, which system_server waits for at the first boot, or a skin's own daemon.
      */
     fun lazyAidl(iface: String, root: File): GuestService? {
-        val dirs = listOf("system/etc/init", "system_ext/etc/init", "system/system_ext/etc/init", "product/etc/init", "system/product/etc/init").map { File(root, it) } +
+        val dirs = listOf("system/etc/init", "system_ext/etc/init", "system/system_ext/etc/init", "product/etc/init", "system/product/etc/init",
+            // Modified for AEmulator Plus (2026-10-31): the board's lazy AIDL services live in the vendor partition (Android 17
+            // desktop: vendor.google.desktop.vpd_executor, futility, i2c, camera-tool executors: "disabled oneshot", started only
+            // by "interface aidl"). Without these directories the request was dropped silently and DesktopRepairModeService
+            // waited for IVpdExecutor in system_server's main thread until the watchdog killed it.
+            "vendor/etc/init", "system/vendor/etc/init", "odm/etc/init", "system/odm/etc/init").map { File(root, it) } +
             File(root, "apex").listFiles().orEmpty().map { File(it, "etc") }
         for (f in dirs.flatMap { d -> d.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".rc") }.sortedBy { it.name } }) {
             var name = ""; var argv = emptyList<String>()

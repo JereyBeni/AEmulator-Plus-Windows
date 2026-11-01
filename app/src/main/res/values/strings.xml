@@ -321,6 +321,8 @@
     <string name="vm_export_failed">Export failed. Fully shut down all VMs and check destination space and access. If a partial file remains, delete it before retrying.</string>
     <string name="vs_motion">Host motion sensors</string>
     <string name="vs_motion_sub">Forward available accelerometer, gyroscope and magnetic-field sensors (Android 2.2–7.1). When off, Rotate screen simulates gravity instead; guest auto-rotate must be enabled. Experimental; takes effect after a full VM restart. Paused while the VM screen is hidden.</string>
+    <string name="vs_guest_nav">Enable navigation bar / taskbar</string>
+    <string name="vs_guest_nav_sub">Let the guest draw its own navigation bar, or the taskbar of Android desktop builds (sets qemu.hw.mainkeys=0). Set to on at import for desktop builds only, off for every other image. Takes effect at the next full boot.</string>
     <string name="vs_no_sensors">Disable all sensors</string>
     <string name="vs_no_sensors_sub">Run the guest without any sensors, for firmware whose sensor service crashes under emulation. On by default for Android Wear SDK builds on API 24+, where it is needed to boot. Takes effect at the next full boot.</string>
     <string name="vs_gyro_lock">Lock gyroscope orientation</string>
@@ -472,6 +474,8 @@
     <string name="as_led_sub">Show the guest phone’s LED above its screen</string>
     <string name="as_new_home">New home screen</string>
     <string name="as_new_home_sub">Grid library with a bottom bar (the 0.0.0.3 style). Turn off for the classic list. Takes effect after the app restarts.</string>
+    <string name="vs_art_boot_image">Use ART boot image (Android 14+)</string>
+    <string name="vs_art_boot_image_sub">Off: the guest runs without a boot image. Start-up is slower, but nothing of the image can fail. On: the emulator prepares a boot image for this runtime (built once at the next start, which takes a while).</string>
     <string name="vs_no_watchdog">Disable system watchdog (Android 14+)</string>
     <string name="vs_no_watchdog_sub">For a boot that is slower than Android\'s 60 s watchdog limit, which kills system_server in a loop. Patches the firmware\'s services.jar so the watchdog thread ends at once; a real system deadlock is then no longer recovered by a restart. The jar\'s precompiled code is ignored, which can make the first boot slower. Turning it off restores the stock jar. Takes effect on the next full boot.</string>
     <string name="vs_thermal">Thermal passthrough</string>

@@ -51,8 +51,12 @@ object EngineAssets {
 
     /**
      * File name to asset path for one layer directory, resolved for a guest of the given architecture. Later wins:
-     * the plain files of the directory, then the other architecture's subdirectory, then the guest's own one. A name
-     * both subdirectories (or one of them and the plain files) carry is therefore taken from the guest's own.
+     * the other architecture's subdirectory, then the plain files of the directory, then the guest's own subdirectory.
+     * The guest's own architecture therefore always wins (arm32/ over arm64/ on a 32-bit guest, arm64/ over arm32/ on a
+     * 64-bit one), and the plain files, which are the 64-bit programs of a layer with no arm64/ directory, are not
+     * covered by the other architecture's files of the same name (modified for AEmulator Plus, 2026-11-01: the arm32
+     * allocator and keymaster services of engines/n64-30 were laid over the plain 64-bit ones on a 64-bit tree and
+     * could not link).
      */
     fun layerFiles(ctx: Context, dir: String, guest64: Boolean): Map<String, String> {
         load(ctx)
@@ -60,7 +64,7 @@ object EngineAssets {
         val own = if (guest64) ARM64 else ARM32
         val other = if (guest64) ARM32 else ARM64
         val out = LinkedHashMap<String, String>()
-        for (sub in listOf(d, "$d/$other", "$d/$own")) for (n in dirs?.get(sub).orEmpty()) out[n] = "$sub/$n"
+        for (sub in listOf("$d/$other", d, "$d/$own")) for (n in dirs?.get(sub).orEmpty()) out[n] = "$sub/$n"
         return out
     }
 

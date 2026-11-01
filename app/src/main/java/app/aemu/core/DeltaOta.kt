@@ -444,6 +444,16 @@ object DeltaOta {
     private val BOOTLOADER = Regex("""\bifelse\s*\(\s*msm\.boot_update\s*\(\s*"[a-z]+"\s*\)\s*,\s*\((?:\s*package_extract_file\s*\($Q\s*,\s*$Q\s*\)\s*;)*\s*\)\s*,\s*""\s*\)\s*;""")
     private val BOOTLOADER_END = Regex("""\bmsm\.boot_update\s*\(\s*"finalize"\s*\)\s*;""")
 
+    // Android 10/11: set_bootloader_env("upgrade_step", "3") records how far the install got, for the bootloader to resume
+    // an interrupted one; a VM has no bootloader environment, so the call is cut out
+    private val BOOTLOADER_ENV = Regex("""\bset_bootloader_env\s*\(\s*$Q\s*,\s*$Q\s*\)\s*;""")
+    // format("ext4", "EMMC", "/dev/block/metadata", "0", "/metadata"): the /metadata partition (the OTA's own bookkeeping, the
+    // device's encryption state) is not part of a VM, so only that one is cut out; format of any other partition stays refused
+    private val METADATA_FORMAT = Regex("""\bformat\s*\(\s*$Q\s*,\s*$Q\s*,\s*"[^"]*/metadata"\s*,\s*$Q\s*,\s*"/metadata"\s*\)\s*;""")
+    // package_extract_file(image, "/dev/block/<logo, recovery, vbmeta, dtbo...>"): raw writes of partitions a VM does not have
+    // (the boot partition is the one that is not among them)
+    private val RAW_DEV_EXTRACT = Regex("""\bpackage_extract_file\s*\(\s*$Q\s*,\s*"/dev/block/(?:[^"/]+/)*(?!boot(?:_[ab])?")[^"]*"\s*\)""")
+
     // Android 5.0 Android TV: the bootloader is staged by serial number; a VM has no bootloader partition, so the whole if / else is cut out
     private const val SERIAL_TERM = "\\(\\s*is_substring\\s*\\(\\s*$Q\\s*,\\s*getprop\\s*\\(\\s*$Q\\s*\\)\\s*\\)\\s*\\)"
     private const val BL_STMT = "(?:ui_print\\s*\\($Q\\s*\\)|package_extract_file\\s*\\($Q\\s*,\\s*$Q\\s*\\))\\s*;"
@@ -509,8 +519,10 @@ object DeltaOta {
         val bootloaders = BOOTLOADER.findAll(afterGate).count()
         val stagedBootloaders = BOOTLOADER_IF.findAll(afterGate).count()
         val rawImages = RAW_OTHER.findAll(afterGate).count() + BASEBAND.findAll(afterGate).count() + EdifyCompat.skippedFirmware(afterGate)
+        val formatsMetadata = METADATA_FORMAT.containsMatchIn(afterGate)
         val text = afterGate.replace(BOOTLOADER, "").replace(BOOTLOADER_END, "").replace(BOOTLOADER_IF, "")
-            .replace(RAW_OTHER, "").replace(BASEBAND, "")
+            .replace(RAW_OTHER, "").replace(BASEBAND, "").replace(BOOTLOADER_ENV, "").replace(METADATA_FORMAT, "")
+        val devImages = RAW_DEV_EXTRACT.findAll(text).count()
         val bare = text.replace(Regex(Q), "\"\"")
 
         val unknown = CALL.findAll(bare).map { it.groupValues[1] }.filter { it !in HANDLED && it !in IGNORED }.toSortedSet()
@@ -521,7 +533,8 @@ object DeltaOta {
         var boot: PatchStep? = null
         val notes = ArrayList<Msg>(gateNotes)
         if (text.contains("huawei_bootloader_update")) notes.add(Msg("the bootloader / modem images of this OTA are not part of a VM and were skipped", R.string.ota_the_bootloader_modem_images_of_this))
-        if (rawImages > 0) notes.add(Msg("the modem / baseband / bootloader images of this OTA are not part of a VM and were skipped", R.string.ota_the_bootloader_modem_images_of_this))
+        if (formatsMetadata) notes.add(Msg("the /metadata partition of this OTA is not part of a VM and was not reformatted"))
+        if (rawImages + devImages > 0) notes.add(Msg("the modem / baseband / bootloader images of this OTA are not part of a VM and were skipped", R.string.ota_the_bootloader_modem_images_of_this))
         if (bootloaders > 0 || stagedBootloaders > 0) notes.add(Msg("the bootloader images (sbl1, tz, rpm, aboot...) are not part of a VM and were skipped", R.string.ota_the_bootloader_images_sbl_tz_rpm))
         val matches = APPLY.findAll(text).toList()
         val oldMatches = APPLY_OLD.findAll(text).toList()
@@ -685,16 +698,36 @@ object DeltaOta {
     }
 
     /** Where the app set a vendor file aside after the import (TreeFixer.sanitize and friends). */
-    private fun parkedFile(paths: VmPaths, p: String): File {
+    private fun parkedFile(paths: VmPaths, p: String): File = asideFile(paths, "system/.aemu-parked", p)
+
+    /**
+     * The folders in which TreeFixer keeps the stock bytes of files it edited in place (the vendor / odm / system HAL
+     * manifests it trims, the libraries and manifests it replaces with the engine's): system/.aemu-parked and
+     * system/.aemu-vintf-orig. Files in them are named after the path they came from, with "#" for "/".
+     */
+    private val BACKUP_DIRS = listOf("system/.aemu-parked", "system/.aemu-vintf-orig")
+    private val BACKUP_SUFFIXES = listOf("", ".stock", ".orig")
+
+    /** Every place the app may have kept the stock bytes of the guest file [p] (they are only used if their SHA-1 is the stock one). */
+    private fun backupFiles(paths: VmPaths, p: String): List<File> {
+        val out = LinkedHashSet<File>()
+        for (d in BACKUP_DIRS) {
+            val f = asideFile(paths, d, p)
+            for (sfx in BACKUP_SUFFIXES) out.add(if (sfx.isEmpty()) f else File(f.path + sfx))
+        }
+        return out.toList()
+    }
+
+    private fun asideFile(paths: VmPaths, dirName: String, p: String): File {
         val parts = p.split('/').filter { it.isNotEmpty() }
-        val dir = File(paths.root, "system/.aemu-parked")
+        val dir = File(paths.root, dirName)
         val primary = File(dir, parts.joinToString("#"))
         // TreeFixer names a parked item after the path it found it under, and it parks whole folders too
         // (system/app/NfcNci moves with its apk and oat folder as "system#app#NfcNci"). /vendor is an alias of
         // /system/vendor and is listed first, so vendor HALs are parked as "vendor#lib#hw#x.so".
         val variants = ArrayList<List<String>>()
         variants.add(parts)
-        if (parts.size > 2 && parts[0] == "system" && parts[1] == "vendor") variants.add(parts.drop(1))
+        if (parts.size > 2 && parts[0] == "system" && parts[1] in setOf("vendor", "odm", "product", "system_ext")) variants.add(parts.drop(1))
         for (v in variants) {
             for (k in v.size downTo 1) {
                 val item = File(dir, v.subList(0, k).joinToString("#"))
@@ -715,14 +748,32 @@ object DeltaOta {
      * at the next start.
      */
     private class Fix(val strip: Boolean = false, val pers: Boolean = false, val maps: Int = -1,
+                      /** keylayout/Generic.kl, qwerty.kl: 3 / 1 = "key 102   MOVE_HOME" / "key 102 MOVE_HOME" that keyLayout() changed to HOME */
+                      val klHome: Int = 0,
+                      /** ...and the "AEmulator navigation recents keys" block it appended */
+                      val klTail: Boolean = false,
+                      /** wrapper scripts (am, input, monkey...): "exec app_process" that scriptShebangs made absolute; (what it wrote, what the stock file has) */
+                      val exec: Pair<String, String>? = null,
                       /** libselinux: entries (file offset, bit 40 = Thumb) that ElfPatch.returnZero overwrote */
                       val rets: List<Long> = emptyList(),
                       /** Dalvik core odex/dex: the /proc/net/if_inet6 string that DexStringPatch swapped */
                       val ifinet: Boolean = false) {
-        val identity get() = !strip && !pers && maps < 0 && rets.isEmpty() && !ifinet
+        val identity get() = !strip && !pers && maps < 0 && rets.isEmpty() && !ifinet && exec == null && klHome == 0 && !klTail
         fun revert(b: ByteArray): ByteArray {
             if (identity) return b
-            val d = if (strip) b.copyOfRange(SHEBANG.size, b.size) else b.copyOf()
+            var d = if (strip) b.copyOfRange(SHEBANG.size, b.size) else b.copyOf()
+            if (klHome != 0 || klTail) {
+                var t = String(d, Charsets.ISO_8859_1)
+                if (klTail && t.endsWith(KL_TAIL)) t = t.removeSuffix(KL_TAIL)
+                if (klHome == 3) t = t.replace("key 102   HOME", "key 102   MOVE_HOME")
+                if (klHome == 1) t = t.replace("key 102 HOME", "key 102 MOVE_HOME")
+                d = t.toByteArray(Charsets.ISO_8859_1)
+            }
+            if (exec != null) {
+                val (written, stock) = exec
+                val re = Regex("(?m)^(\\s*)exec " + Regex.escape(written) + "(?![A-Za-z0-9_])")
+                d = re.replace(String(d, Charsets.ISO_8859_1)) { it.groupValues[1] + "exec " + stock }.toByteArray(Charsets.ISO_8859_1)
+            }
             if (pers) personalitySites(d, true)
             if (ifinet) DexStringPatch.undo(d)
             if (maps >= 0) for (k in ORIG_MAPS.indices) d[maps + k] = ORIG_MAPS[k]
@@ -778,9 +829,34 @@ object DeltaOta {
         return out
     }
 
+    private const val KL_TAIL = "\n# AEmulator navigation recents keys\nkey 580 APP_SWITCH\nkey 187 APP_SWITCH\nkey 254 APP_SWITCH\n"
+    private val EXEC_WRITTEN = listOf("/system/bin/app_process", "/system/bin/app_process32")
+
     private fun fixes(b: ByteArray): Sequence<Fix> = sequence {
         yield(Fix())
-        if (b.size > SHEBANG.size && SHEBANG.indices.all { b[it] == SHEBANG[it] }) yield(Fix(strip = true))
+        val shebang = b.size > SHEBANG.size && SHEBANG.indices.all { b[it] == SHEBANG[it] }
+        if (shebang) yield(Fix(strip = true))
+        // key layouts (Generic.kl, qwerty.kl): keyLayout() makes 102 a HOME key and adds the recents keys when there are none
+        if (b.isNotEmpty() && b.size <= 64_000) {
+            val kt = String(b, Charsets.ISO_8859_1)
+            if (kt.contains("key ")) {
+                val tail = kt.endsWith(KL_TAIL)
+                val homes = listOfNotNull(0, if (kt.contains("key 102   HOME")) 3 else null, if (kt.contains("key 102 HOME")) 1 else null)
+                for (h in homes) for (t in (if (tail) listOf(true, false) else listOf(false)))
+                    if (h != 0 || t) yield(Fix(klHome = h, klTail = t))
+            }
+        }
+        // wrapper scripts (am, input, monkey...): scriptShebangs wrote the full path after "exec"; the stock script has
+        // "exec app_process" (or the full path itself, in which case the file was not changed and matches as it is)
+        if (b.isNotEmpty() && b.size <= 64_000 && b[0] == '#'.code.toByte()) {
+            val text = String(b, Charsets.ISO_8859_1)
+            for (w in EXEC_WRITTEN) if (text.contains("exec $w")) {
+                for (stock in listOf("app_process", "/system/bin/app_process").filter { it != w }) {
+                    yield(Fix(exec = w to stock))
+                    if (shebang) yield(Fix(strip = true, exec = w to stock))
+                }
+            }
+        }
         val pers = b.size > 1000 && b[0] == 0x7f.toByte() && personalitySites(b, false) > 0
         if (pers) yield(Fix(pers = true))
         for (m in mapsSites(b)) {
@@ -995,7 +1071,7 @@ object DeltaOta {
         val gp = "/" + prefix + f.path
         val g = guestFile(paths, gp)
         // the app keeps the original next to files it rewrites: egl.cfg.rom, audio_policy.conf.rom, libGLES_android.so.sw
-        for (file in listOf(g, parkedFile(paths, gp), File(g.path + ".rom"), File(g.path + ".sw"))) {
+        for (file in listOf(g) + backupFiles(paths, gp) + listOf(File(g.path + ".rom"), File(g.path + ".sw"))) {
             if (!file.isFile) continue
             val b = file.readBytes()
             if (b.size.toLong() == f.size && sha1(b) == f.sha1) return b
@@ -1004,17 +1080,26 @@ object DeltaOta {
                 val r = fix.revert(b)
                 if (r.size.toLong() == f.size && sha1(r) == f.sha1) return r
             }
+            // the system WebView apk: WebView64 rewrote its manifest in place and left the original bytes in an undo record
+            if (f.path.endsWith(".apk") && file === g) for (d in BACKUP_DIRS) {
+                val rec = File(asideFile(paths, d, gp).path + WebView64.UNDO_SUFFIX)
+                if (!rec.isFile) continue
+                val r = WebView64.undo(b, rec.readBytes()) ?: continue
+                if (r.size.toLong() == f.size && sha1(r) == f.sha1) return r
+            }
         }
         return null
     }
 
     /** Copies of [tmp] for the ".rom" / ".sw" originals the app keeps next to [gp], so that they follow the new build too. */
-    private fun sidecarCopies(paths: VmPaths, gp: String, tmp: File, mode: Int?, mk: () -> File): List<Staged> {
+    private fun sidecarCopies(paths: VmPaths, gp: String, tmp: File, mode: Int?, except: File? = null, mk: () -> File): List<Staged> {
         val g = guestFile(paths, gp)
         val out = ArrayList<Staged>()
-        for (ext in listOf(".rom", ".sw")) {
-            val sc = File(g.path + ext)
-            if (!sc.isFile) continue
+        val seen = HashSet<String>()
+        // the stock originals the app keeps next to / away from files it edited follow the new build too; otherwise the
+        // next delta OTA would find the old build's bytes there
+        for (sc in listOf(File(g.path + ".rom"), File(g.path + ".sw")) + backupFiles(paths, gp)) {
+            if (!sc.isFile || sc.path == g.path || sc.path == except?.path || !seen.add(sc.path)) continue
             val c = mk()
             tmp.copyTo(c, overwrite = true)
             out.add(Staged(c, sc, mode, sc.canExecute()))
@@ -1037,8 +1122,8 @@ object DeltaOta {
      */
     private fun preChecks(zip: ZipFile, step: BlockStep, prog: BlockOta.Program, plan: Plan, image: File, staging: File, progress: (Msg) -> Unit,
                           modified: List<String> = emptyList()) {
-        val why = if (modified.isEmpty()) "" else " ${modified.size} files of /system were changed by the app or by you and cannot be rebuilt, e.g. ${modified.take(4).joinToString(", ")}; the OTA reads them."
-        val modifiedList = modified.take(4).joinToString(", ")
+        val why = if (modified.isEmpty()) "" else " ${modified.size} files of /system were changed by the app or by you and cannot be rebuilt, e.g. ${modified.take(12).joinToString(", ")}; the OTA reads them."
+        val modifiedList = modified.take(12).joinToString(", ")
         for (c in plan.rangeChecks) {
             if (c.partition != step.partition) continue
             if (c.after) continue
@@ -1198,7 +1283,7 @@ object DeltaOta {
                         val pk = parkedFile(paths, gp)
                         val dest = if (!exists(g) && pk.isFile) pk else g
                         staged.add(Staged(tmp, dest, node.perm, dest.canExecute()))
-                        staged.addAll(sidecarCopies(paths, gp, tmp, node.perm) { File(staging, "${step.partition}-b${n++}") })
+                        staged.addAll(sidecarCopies(paths, gp, tmp, node.perm, dest) { File(staging, "${step.partition}-b${n++}") })
                         if (prev != null) patched++ else added++
                     }
                 }

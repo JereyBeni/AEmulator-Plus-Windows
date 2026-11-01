@@ -61,8 +61,10 @@ build() { # имя, определения, soname, дополнительные
 build audio.primary.aosp.so "" audio.primary.default.so ""
 build audio.primary.directtrack.so "-DAEMU_DIRECTTRACK -Wl,--no-undefined" audio.primary.default.so
 build audio.primary.ics.so "-DAEMU_ICS" audio.primary.default.so
+build audio.primary.jb41.so "-DAEMU_ICS -DAEMU_JB41" audio.primary.default.so
 build audio.primary.ics-samsung.so "-DAEMU_ICS -DAEMU_SLOT_SHIFT=12" audio.primary.default.so
 build audio.primary.ics-qcom.so "-DAEMU_ICS -DAEMU_QCOM" audio.primary.default.so
+build audio.primary.fmvol.so "-DAEMU_FMVOL" audio.primary.default.so
 build audio.primary.mtk.so "-DAEMU_MTK -DAEMU_PCM_DEV=\"/dev/aemu_pcm\"" libaudio.primary.default.so "-ldl_stub"
 
 # Проверка импортов: bionic 4.x не экспортирует ни __aeabi_uidiv, ни __aeabi_unwind_cpp_pr0 — с таким
