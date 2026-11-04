@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM máy khách</string>
     <string name="vs_ram_auto">Tự động</string>
+    <string name="vs_ram_host">Máy chủ / tối đa</string>
+    <string name="vs_ram_custom">Tùy chỉnh</string>
+    <string name="vs_ram_custom_hint">Dung lượng</string>
     <string name="vs_radio_title">Radio</string>
     <string name="vs_radio">Giả lập mô-đun radio</string>
     <string name="vs_radio_sub">Điện thoại, IMEI và tín hiệu. Tắt: firmware hoạt động như máy tính bảng chỉ có Wi-Fi</string>

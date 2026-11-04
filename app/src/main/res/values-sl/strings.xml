@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM gostujočega sistema</string>
     <string name="vs_ram_auto">Samodejno</string>
+    <string name="vs_ram_host">Gostitelj / maks.</string>
+    <string name="vs_ram_custom">Po meri</string>
+    <string name="vs_ram_custom_hint">Količina</string>
     <string name="vs_network">Sporočeno omrežje</string>
     <string name="vs_network_sub">Kaj prikazuje vrstica stanja: od 2G do LTE. Privzeto je 2G, ker vsa vdelana programska oprema ne zmore 3G ali novejšega</string>
     <string name="m_network">Omrežje</string>

@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Misafir RAM’i</string>
     <string name="vs_ram_auto">Otomatik</string>
+    <string name="vs_ram_host">Ana makine / maks.</string>
+    <string name="vs_ram_custom">Özel</string>
+    <string name="vs_ram_custom_hint">Miktar</string>
     <string name="vs_radio_title">Telsiz</string>
     <string name="vs_radio">Telsiz modülünü emüle et</string>
     <string name="vs_radio_sub">Telefon hizmeti, IMEI ve sinyal. Kapalı: yazılım yalnızca Wi-Fi’li bir tablet gibi davranır</string>

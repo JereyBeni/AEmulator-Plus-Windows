@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Vieraan RAM</string>
     <string name="vs_ram_auto">Automaattinen</string>
+    <string name="vs_ram_host">Isäntä / maks.</string>
+    <string name="vs_ram_custom">Mukautettu</string>
+    <string name="vs_ram_custom_hint">Määrä</string>
     <string name="vs_network">Ilmoitettu verkko</string>
     <string name="vs_network_sub">Mitä tilapalkki näyttää: 2G–LTE. Oletus 2G, koska kaikki laiteohjelmistot eivät toimi 3G:llä tai uudemmalla</string>
     <string name="m_network">Verkko</string>

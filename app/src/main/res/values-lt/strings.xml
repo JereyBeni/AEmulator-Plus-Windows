@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Svečio RAM</string>
     <string name="vs_ram_auto">Automatiškai</string>
+    <string name="vs_ram_host">Pagrindinis / maks.</string>
+    <string name="vs_ram_custom">Pasirinktinis</string>
+    <string name="vs_ram_custom_hint">Kiekis</string>
     <string name="vs_network">Rodomas tinklas</string>
     <string name="vs_network_sub">Ką rodo būsenos juosta: nuo 2G iki LTE. Numatytasis yra 2G, nes ne visa programinė įranga veikia su 3G ar naujesniu</string>
     <string name="m_network">Tinklas</string>

@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM ของเกสต์</string>
     <string name="vs_ram_auto">อัตโนมัติ</string>
+    <string name="vs_ram_host">โฮสต์ / สูงสุด</string>
+    <string name="vs_ram_custom">กำหนดเอง</string>
+    <string name="vs_ram_custom_hint">จำนวน</string>
     <string name="vs_network">เครือข่ายที่รายงาน</string>
     <string name="vs_network_sub">สิ่งที่แถบสถานะแสดง: 2G ถึง LTE ค่าเริ่มต้นคือ 2G เพราะไม่ใช่เฟิร์มแวร์ทุกตัวที่รองรับ 3G หรือใหม่กว่า</string>
     <string name="m_network">เครือข่าย</string>

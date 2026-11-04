@@ -1,6 +1,7 @@
 /* Modified for AEmulator Sunset, 2026-10-03: VM export, motion and host resolution.
  * Modified for AEmulator Super Plus, 2026-10-11: fake SIM card section, Wi-Fi signal and neighbours.
  * Modified for AEmulator Plus, 2026-10-28: Android 14+ watchdog toggle.
+ * Modified for AEmulator Plus, 2026-11-02: Wi-Fi is offered for Android 8 - 17 (engine of the running VM, not the stored one).
  * GPL-3.0; upstream attribution retained in NOTICE.md. */
 package app.aemu.ui
 
@@ -61,6 +62,8 @@ import app.aemu.core.Engine
 import app.aemu.core.GuestImage
 import app.aemu.core.GyroLock
 import app.aemu.core.NetworkType
+import app.aemu.core.RamChoice
+import kotlin.math.roundToInt
 import app.aemu.core.VmSettings
 import app.aemu.core.WifiEmu
 import app.aemu.core.VmStorageLease
@@ -76,12 +79,23 @@ import kotlinx.coroutines.withContext
 
 private val RESOLUTIONS = ResolutionPreset.entries
 
-private val RAM_STEPS = listOf(0, 256, 512, 768, 1024, 1536, 2048, 3072, 4096)
+// Modified for AEmulator Plus (2026-11-04): automatic, the presets, host / max, then "custom" (a box for an MB amount).
+// RAM_CUSTOM only marks the last slider position; it is never stored.
+private const val RAM_CUSTOM = -2
+private val RAM_STEPS = listOf(RamChoice.AUTO) + RamChoice.PRESETS_MB + RamChoice.HOST + RAM_CUSTOM
+
+private fun ramText(mb: Int): String =
+    if (mb < 1024) "$mb MB"
+    else if (mb % 1024 == 0) "${mb / 1024} GB"
+    else String.format(java.util.Locale.ROOT, "%.1f GB", mb / 1024.0) + " (" + mb + " MB)"
 
 @Composable
-fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -> Unit) {
+fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings, String) -> Unit) {
     var s by remember { mutableStateOf(img.settings) }
+    var name by remember { mutableStateOf(img.name) }
     val ctx = LocalContext.current
+    // follows the settings being edited: with 32-bit translation off, a 32-bit 8.0+ firmware runs on the universal engine
+    val wifiOffered = WifiEmu.offered(img.copy(settings = s))
     // CDMA modem: automatic from the firmware's telephony.lteOnCdmaDevice unless the user chose
     val fwLteOnCdma = remember(img.id) { CdmaMode.supported(img.api) && CdmaMode.firmwareLteOnCdma(app.aemu.core.VmPaths(ctx, img.id)) }
     val cdmaOn = CdmaMode.supported(img.api) && (s.cdma ?: fwLteOnCdma)
@@ -94,6 +108,11 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).navigationBarsPadding()) {
             Text(stringResource(R.string.settings), style = MaterialTheme.typography.headlineSmall)
             Text(img.name, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(16.dp))
+
+            // rename the machine; a blank name keeps the current one (see LibraryModel.updateSettings)
+            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
+                label = { Text(stringResource(R.string.name)) }, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(16.dp))
 
             Text(stringResource(R.string.vs_screen), style = MaterialTheme.typography.titleMedium)
@@ -143,7 +162,7 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
             if (img.api < 14) Toggle(stringResource(R.string.vs_legacy), stringResource(R.string.vs_legacy_sub), s.legacyEngine) { s = s.copy(legacyEngine = it) }
             if (img.api >= 26 && img.abi.startsWith("armeabi")) Toggle(
                 "Translate on the native engine",
-                "32-bit firmware of Android 8+ (Wear OS 9, ...): run it on the arm64 engine through qemu-arm. The universal engine cannot start it (binder protocol 8). Takes effect on the next start.",
+                "32-bit firmware of Android 8+ (Wear OS 9, ...): run it on the arm64 engine through qemu-arm. The universal engine cannot start it (binder protocol 8). With the GPU option on, apps' OpenGL ES drawing goes to the phone's GPU (8.0+). Takes effect on the next start.",
                 s.translate32
             ) { s = s.copy(translate32 = it) }
             val has32 = CpuInfo.hasAArch32
@@ -153,14 +172,46 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
                 s.native32 && has32
             ) { if (has32) s = s.copy(native32 = it) }
             Toggle(stringResource(R.string.vs_thermal), stringResource(R.string.vs_thermal_sub), s.thermalPassthrough) { s = s.copy(thermalPassthrough = it) }
-            val ramIdx = RAM_STEPS.indexOf(s.ramMb).coerceAtLeast(0)
+            // the custom box stays open while it is edited, even when the typed amount equals one of the presets
+            var ramCustom by remember { mutableStateOf(s.ramMb > 0 && s.ramMb !in RamChoice.PRESETS_MB) }
+            var ramBox by remember { mutableStateOf(if (s.ramMb > 0 && s.ramMb !in RamChoice.PRESETS_MB) s.ramMb.toString() else "") }
+            val hostMb = remember { RamChoice.hostMb() }
+            val ramIdx = if (ramCustom) RAM_STEPS.lastIndex else RAM_STEPS.indexOf(s.ramMb).coerceAtLeast(0)
             ListItem(
                 headlineContent = { Text(stringResource(R.string.vs_ram)) },
                 supportingContent = {
                     Column {
-                        Text(if (s.ramMb == 0) stringResource(R.string.vs_ram_auto) else "${s.ramMb} MB")
-                        Slider(value = ramIdx.toFloat(), onValueChange = { s = s.copy(ramMb = RAM_STEPS[it.toInt()]) },
-                            valueRange = 0f..RAM_STEPS.lastIndex.toFloat(), steps = RAM_STEPS.size - 2)
+                        Text(when {
+                            ramCustom -> stringResource(R.string.vs_ram_custom)
+                            s.ramMb == RamChoice.AUTO -> stringResource(R.string.vs_ram_auto)
+                            s.ramMb == RamChoice.HOST -> stringResource(R.string.vs_ram_host) + " (" + ramText(hostMb) + ")"
+                            else -> ramText(s.ramMb)
+                        })
+                        Slider(value = ramIdx.toFloat(), onValueChange = {
+                            val step = RAM_STEPS[it.roundToInt().coerceIn(0, RAM_STEPS.lastIndex)]
+                            if (step == RAM_CUSTOM) {
+                                if (!ramCustom) {
+                                    // start from what is selected now
+                                    val seed = when { s.ramMb > 0 -> s.ramMb; s.ramMb == RamChoice.HOST -> hostMb; else -> 2048 }
+                                    ramCustom = true; ramBox = seed.toString(); s = s.copy(ramMb = seed)
+                                }
+                            } else { ramCustom = false; s = s.copy(ramMb = step) }
+                        }, valueRange = 0f..RAM_STEPS.lastIndex.toFloat(), steps = RAM_STEPS.size - 2)
+                        if (ramCustom) OutlinedTextField(
+                            value = ramBox,
+                            onValueChange = { v ->
+                                val digits = v.filter { c -> c.isDigit() }.take(6)
+                                ramBox = digits
+                                // an amount that is too small is shown as an error and the last valid one is kept
+                                digits.toIntOrNull()?.takeIf { n -> n >= RamChoice.CUSTOM_MIN_MB }?.let { n -> s = s.copy(ramMb = n) }
+                            },
+                            label = { Text(stringResource(R.string.vs_ram_custom_hint)) },
+                            suffix = { Text("MB") },
+                            singleLine = true,
+                            isError = (ramBox.toIntOrNull() ?: 0) < RamChoice.CUSTOM_MIN_MB,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -180,7 +231,7 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
             if (img.api >= 26) Toggle(stringResource(R.string.vs_sf_tombstone), stringResource(R.string.vs_sf_tombstone_sub), s.sfTombstone) { s = s.copy(sfTombstone = it) }
             if (img.api >= 34) Toggle(stringResource(R.string.vs_art_boot_image), stringResource(R.string.vs_art_boot_image_sub), s.useArtBootImage) { s = s.copy(useArtBootImage = it) }
             if (img.api >= 34) Toggle(stringResource(R.string.vs_no_watchdog), stringResource(R.string.vs_no_watchdog_sub), s.disableWatchdog) { s = s.copy(disableWatchdog = it) }
-            if (WifiEmu.supported(img.engine, img.api, false, false)) {
+            if (wifiOffered) {
                 Toggle(stringResource(R.string.vs_wifi), stringResource(R.string.vs_wifi_sub), s.wifi) { s = s.copy(wifi = it) }
                 if (s.wifi) WifiFields(s) { s = it }
             }
@@ -293,8 +344,9 @@ fun SettingsSheet(img: GuestImage, onDismiss: () -> Unit, onSave: (VmSettings) -
                 Text(stringResource(R.string.vm_reset_data), color = MaterialTheme.colorScheme.error)
             }
             resetMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            val wifiOk = !s.wifi || (WifiEmu.cleanSsid(s.wifiSsid).isNotEmpty() && WifiEmu.passwordValid(s.wifiPassword))
-            Button(enabled = !resetting && wifiOk, onClick = { onSave(s) }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(stringResource(R.string.save)) }
+            // fields that are not shown cannot hold Save back
+            val wifiOk = !(s.wifi && wifiOffered) || (WifiEmu.cleanSsid(s.wifiSsid).isNotEmpty() && WifiEmu.passwordValid(s.wifiPassword))
+            Button(enabled = !resetting && wifiOk, onClick = { onSave(s, name) }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text(stringResource(R.string.save)) }
             Spacer(Modifier.height(16.dp))
         }
     }

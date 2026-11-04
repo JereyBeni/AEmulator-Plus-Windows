@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM hostovaného systému</string>
     <string name="vs_ram_auto">Automaticky</string>
+    <string name="vs_ram_host">Hostitel / max.</string>
+    <string name="vs_ram_custom">Vlastní</string>
+    <string name="vs_ram_custom_hint">Množství</string>
     <string name="vs_network">Hlášená síť</string>
     <string name="vs_network_sub">Co zobrazuje stavový řádek: od 2G po LTE. Výchozí je 2G, protože ne každý firmware zvládá 3G a novější</string>
     <string name="m_network">Síť</string>

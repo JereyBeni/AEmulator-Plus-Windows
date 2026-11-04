@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM an aoi</string>
     <string name="vs_ram_auto">Uathoibríoch</string>
+    <string name="vs_ram_host">Óstach / uas.</string>
+    <string name="vs_ram_custom">Saincheaptha</string>
+    <string name="vs_ram_custom_hint">Méid</string>
     <string name="vs_network">Líonra tuairiscithe</string>
     <string name="vs_network_sub">An rud a thaispeánann an barra stádais: 2G go LTE. Is é 2G an réamhshocrú, mar ní láimhseálann gach dochtearraí 3G ná níos nuaí</string>
     <string name="m_network">Líonra</string>

@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">گیسٹ RAM</string>
     <string name="vs_ram_auto">خودکار</string>
+    <string name="vs_ram_host">میزبان / زیادہ سے زیادہ</string>
+    <string name="vs_ram_custom">حسب ضرورت</string>
+    <string name="vs_ram_custom_hint">مقدار</string>
     <string name="vs_network">رپورٹ کیا جانے والا نیٹ ورک</string>
     <string name="vs_network_sub">اسٹیٹس بار جو دکھاتا ہے: 2G سے LTE تک۔ ڈیفالٹ 2G ہے، کیونکہ ہر فرم ویئر 3G یا نئے نیٹ ورک کو نہیں سنبھال سکتا</string>
     <string name="m_network">نیٹ ورک</string>

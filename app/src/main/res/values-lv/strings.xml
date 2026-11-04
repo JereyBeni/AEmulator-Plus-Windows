@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Viesa RAM</string>
     <string name="vs_ram_auto">Automātiski</string>
+    <string name="vs_ram_host">Resursdators / maks.</string>
+    <string name="vs_ram_custom">Pielāgots</string>
+    <string name="vs_ram_custom_hint">Apjoms</string>
     <string name="vs_network">Uzrādītais tīkls</string>
     <string name="vs_network_sub">Ko rāda statusa josla: no 2G līdz LTE. Noklusējums ir 2G, jo ne katra aparātprogrammatūra darbojas ar 3G vai jaunāku</string>
     <string name="m_network">Tīkls</string>

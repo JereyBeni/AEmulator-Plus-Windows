@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">गेस्ट RAM</string>
     <string name="vs_ram_auto">स्वचालित</string>
+    <string name="vs_ram_host">होस्ट / अधिकतम</string>
+    <string name="vs_ram_custom">कस्टम</string>
+    <string name="vs_ram_custom_hint">मात्रा</string>
     <string name="vs_radio_title">रेडियो</string>
     <string name="vs_radio">रेडियो मॉड्यूल का अनुकरण करें</string>
     <string name="vs_radio_sub">टेलीफ़ोनी, IMEI और सिग्नल। बंद: फ़र्मवेयर Wi-Fi टैबलेट की तरह व्यवहार करता है</string>

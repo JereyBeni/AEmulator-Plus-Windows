@@ -20,6 +20,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** a Java heap below this (a generic system image's 36m) cannot hold system_server of a 64-bit firmware */
 private const val MIN_JAVA_HEAP_MB = 256
 
+/** debug.aemu.gl of a 32-bit-only firmware with the GPU bridge up (native/glbridge/guest.c policy): 3 - everything on the phone's
+ *  GPU, the compositor (SurfaceFlinger) too, and the host shows its frame (hwchal direct mode); 2 (programs' own contexts and the
+ *  window toolkit's, compositor on SwiftShader) and 1 (programs' own only) were the earlier values. A file "glmode" in the image's
+ *  directory overrides it ("2" there goes back to the half-and-half mode). */
+private const val PURE32_GPU_MODE = "3"
+
 /** Daemons system_server cannot live without: restarted even when init.rc marks them oneshot
  * (MIUI installd dies in the LBE security hook on start). */
 private val ALWAYS_RESTART = setOf("mediaserver", "installd", "netd", "keystore")
@@ -706,7 +712,11 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         }
         var glBridge = false
         var glInfo = ""
-        if (engine == Engine.N64 && kernel.gpuBridge64 && s.gpu && File(paths.root, "${kernel.eglDir}/libGLES_aemu.so").isFile) {
+        // Added for AEmulator Plus (2026-11-02): a 32-bit-only firmware has no lib64; its bridge is the armv7 build that
+        // TreeFixer.installPure32GpuBridge put next to the 32-bit SwiftShader
+        val pure32Gpu = engine == Engine.N64 && isPure32Tree(paths.root) && File(paths.root, "${kernel.eglDir32}/libGLES_aemu.so").isFile
+        if (engine == Engine.N64 && kernel.gpuBridge64 && s.gpu &&
+            (pure32Gpu || File(paths.root, "${kernel.eglDir}/libGLES_aemu.so").isFile)) {
             val r = GlHost.start(paths.socket("aemu_gl").absolutePath)
             log("GPU bridge: $r")
             glBridge = r.startsWith("ok"); glInfo = r
@@ -749,6 +759,22 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             overrides["ro.sf.hwrotation"] = "0"
             log("display: ignoring the firmware's panel rotation ($hwRot°), the UI follows the framebuffer")
         }
+        // Added for AEmulator Plus (2026-11-04). The same for Android 10+: a panel mounted sideways is declared by
+        // ro.surface_flinger.primary_display_orientation (ORIENTATION_90 / _180 / _270; Google Home Display / Smart Display
+        // firmware has ORIENTATION_270 on a 540x960 panel), in any partition's build.prop (usually vendor or odm, not
+        // system). SurfaceFlinger then turns the UI inside the framebuffer and the user sees it lying on its side (the
+        // guest came up as a 960x540 landscape UI on the portrait 540x960 framebuffer). The UI follows the framebuffer here.
+        val sfOrient = runCatching {
+            listOf("system/build.prop", "vendor/build.prop", "system/vendor/build.prop", "odm/etc/build.prop", "odm/build.prop",
+                "product/etc/build.prop", "system/product/etc/build.prop", "system_ext/etc/build.prop", "system/system_ext/etc/build.prop")
+                .asSequence().map { File(paths.root, it) }.filter { it.isFile }
+                .mapNotNull { f -> f.readLines().lastOrNull { it.trim().startsWith("ro.surface_flinger.primary_display_orientation=") } }
+                .map { it.substringAfter('=').trim() }.firstOrNull()
+        }.getOrNull()
+        if (sfOrient != null && sfOrient != "ORIENTATION_0" && sfOrient != "0") {
+            overrides["ro.surface_flinger.primary_display_orientation"] = "ORIENTATION_0"
+            log("display: ignoring the firmware's primary display orientation ($sfOrient), the UI follows the framebuffer")
+        }
         // Android 1.0-2.1: Environment.getExternalStorageState() reads this property (the real mountd/vold set it)
         if (img.api in 1..7) overrides[VoldStub.STATE_PROP] = VoldStub.MOUNTED_PROP
         overrides["ro.aemu.host"] = if (engine == Engine.N64) "native" else "qemu-user"
@@ -790,10 +816,12 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             }
         }
         overrides["dalvik.vm.execution-mode"] = if (s.jit) "int:jit" else "int:fast"
-        if (s.lowRam || s.ramMb in 1..768) overrides["ro.config.low_ram"] = "true"
-        if (s.ramMb > 0) {
+        // Modified for AEmulator Plus (2026-11-04): "host / max" (negative) resolves to the host's RAM
+        val chosenRamMb = RamChoice.resolve(s.ramMb)
+        if (s.lowRam || chosenRamMb in 1..768) overrides["ro.config.low_ram"] = "true"
+        if (chosenRamMb > 0) {
             // Dalvik heap sized from the guest RAM budget (like a real device of that class)
-            val heap = (s.ramMb / 4).coerceIn(32, 512)
+            val heap = (chosenRamMb / 4).coerceIn(32, 512)
             overrides["dalvik.vm.heapsize"] = "${heap}m"
             overrides["dalvik.vm.heapgrowthlimit"] = "${(heap / 2).coerceAtLeast(24)}m"
         }
@@ -825,12 +853,29 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             overrides["ro.hardware.egl"] = "aemu"
             if (kernel.bridgeAsEmulation) {
                 overrides["ro.kernel.qemu.gles"] = "1"; overrides["qemu.gles"] = "1"
-                File(paths.root, "${kernel.eglDir}/libGLES_aemu.so").copyTo(File(paths.root, "${kernel.emulationDir ?: kernel.eglDir}/libGLES_emulation.so"), overwrite = true)
+                // (a 32-bit-only firmware: the copy under that name was made by the tree fixer, next to its own bridge)
+                if (!pure32Gpu) File(paths.root, "${kernel.eglDir}/libGLES_aemu.so").copyTo(File(paths.root, "${kernel.emulationDir ?: kernel.eglDir}/libGLES_emulation.so"), overwrite = true)
             }
             // which contexts go to the GPU (native/glbridge/guest.c, policy): 3 - everything, the compositor
             // included; a file "glmode" in the image's directory sets another for a test (0: none, 1: programs' own
             // contexts, 2: the window toolkit's as well)
-            overrides["debug.aemu.gl"] = File(paths.dir, "glmode").takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() } ?: kernel.gpuBridgeMode
+            // A 32-bit-only firmware started with mode 1 (programs' own contexts: games, GLSurfaceView, TextureView; frames are
+            // read back on swap, so the engine's 32-bit gralloc and hwcomposer need nothing from the bridge). That left the
+            // window toolkit's render threads (every app's UI, SystemUI, the launcher) on SwiftShader, translated by qemu-arm
+            // like everything else of a 32-bit guest: "Phone GPU" on, and a launcher at 11 fps (SurfaceFlinger's median in a
+            // log of an 8.1 MediaTek image, "renderer: Google SwiftShader").
+            // Changed for AEmulator Plus (2026-11-03): such a firmware now starts with mode 3 (the compositor too: no half-GPU,
+            // half-SwiftShader split). The engine's 32-bit gralloc and hwcomposer shipped in the assets are the AEMU_META /
+            // direct-mode builds (the installer only puts the bridge in where that gralloc is in place). NOT boot-tested on a
+            // 32-bit tree. A file "glmode" in the image's directory still decides when there is one: "2" or "1" go back.
+            overrides["debug.aemu.gl"] = File(paths.dir, "glmode").takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+                ?: if (pure32Gpu) PURE32_GPU_MODE else kernel.gpuBridgeMode
+            if (pure32Gpu) log("GPU (32-bit firmware): debug.aemu.gl=${overrides["debug.aemu.gl"]}" + when (overrides["debug.aemu.gl"]) {
+                "1" -> " (programs' own contexts only; the UI is drawn by SwiftShader)"
+                "2" -> " (programs' and the window toolkit's contexts on the phone's GPU; the compositor stays on SwiftShader)"
+                "3" -> " (everything on the phone's GPU, the compositor too)"
+                else -> ""
+            })
             // GLES 3.0, or 3.1 when the phone's contexts have it (the renderer says "ES 3.1 to the guest")
             overrides["ro.opengles.version"] = if (glInfo.contains("ES 3.1 to the guest")) "196609" else "196608"
         }
@@ -1105,7 +1150,7 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             val f = File(paths.root, "dev/.aemu-ram")
             if (kernel.ramBudget) f.writeText((GuestRunner.guestRamMb(img.api, s.ramMb) * 1024L).toString()) else f.delete()
         }
-        lmk = GuestLmk(paths.root, s.lowRam, ::log, s.ramMb).also { it.start() }
+        lmk = GuestLmk(paths.root, s.lowRam, ::log, RamChoice.resolve(s.ramMb)).also { it.start() }
         val netCfg = if (s.netProxy) net.start() else GuestRunner.NetConfig()
         runner.sdcardHost = sd
         val r = GuestRunner(paths, img.copy(settings = settings), netCfg.copy(glPath = if (s.gpu) "/dev/socket/gl" else null)).also {
@@ -1664,9 +1709,32 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         }
         // a TEE KeyMint (MediaTek/Trustonic/OP-TEE client) aborts at once without a secure world, and a keymint left declared
         // in the manifests makes keystore2 panic: the program is never started, keystore2 runs its software KeyMint
-        if (engine == Engine.N64 && kernel.treble && Regex("^android\\.hardware\\.security\\.keymint(@[0-9.]+-service(\\..*)?|-service([.-]qti)?)$")
+        if (engine == Engine.N64 && kernel.treble && TreeFixer.TEE_KEYMINT_SERVICE
                 .matches(svc.argv.first().substringAfterLast('/'))) {
             log("· ${svc.name}: TEE KeyMint, skipped (keystore2 uses its software KeyMint)")
+            return
+        }
+        // The board's own composer (MediaTek composer@3.x, composer3 AIDL, Qualcomm) next to the engine's composer@2.1 service: the
+        // engine's HWC 1.2 hwcomposer.default.so is what the screen is drawn through, and the board's service dies on it (SIGSEGV in
+        // FunctionDispatcher::initFunctionPointer). Only when the engine's service is in the tree; otherwise the board's stays.
+        if (engine == Engine.N64 && kernel.treble && TreeFixer.BOARD_COMPOSER_SERVICE.matches(svc.argv.first().substringAfterLast('/')) &&
+            listOf("vendor/bin/hw", "system/vendor/bin/hw").any { File(paths.root, "$it/android.hardware.graphics.composer@2.1-service").isFile }) {
+            log("· ${svc.name}: the board's composer, skipped (the engine's composer@2.1 service serves IComposer)")
+            return
+        }
+        // The board's own power HAL (MediaTek mtkpower-service) would replace the engine's IPower/default and then never answer
+        // (no binder thread pool): system_server blocks in PowerManagerService for ever. Only when the engine's is in the tree.
+        if (engine == Engine.N64 && kernel.treble && TreeFixer.BOARD_POWER_SERVICE.matches(svc.argv.first().substringAfterLast('/')) &&
+            listOf("vendor/bin/hw", "system/vendor/bin/hw").any { File(paths.root, "$it/android.hardware.power-service.aemu").isFile } &&
+            svc.argv.first().substringAfterLast('/') != "android.hardware.power-service.aemu") {
+            log("· ${svc.name}: the board's power HAL, skipped (the engine's power service serves IPower)")
+            return
+        }
+        // The board's AIDL audio services (MediaTek IMtkAudio, audio_input_service) cannot register here (VINTF declaration error, -3)
+        // and abort; the engine's HIDL audio service is the audio HAL. Only when that one is in the tree.
+        if (engine == Engine.N64 && kernel.treble && TreeFixer.BOARD_AIDL_AUDIO_SERVICE.matches(svc.argv.first().substringAfterLast('/')) &&
+            listOf("vendor/bin/hw", "system/vendor/bin/hw").any { File(paths.root, "$it/android.hardware.audio.service").isFile }) {
+            log("· ${svc.name}: the board's AIDL audio service, skipped (the engine's audio HAL serves audio)")
             return
         }
         // GNSS HAL (android.hardware.gnss-aidl-service-qti, gnss_service): the guest has no GNSS hardware and the service
@@ -2354,6 +2422,7 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             runCatching { guestShell("cmd webviewupdate disable-multiprocess", 30_000) }
         TreeFixer(ctx, paths, img, ::log).noScreenSleep()
         disableBrokenComponents()
+        disableSharedConnectivity()
         if (img.api >= 34) runCatching { switchToFullUserOnHsum() }.onFailure { log("headless system user check failed: $it") }
         if (img.api >= 24) runCatching { enableHome() }.onFailure { log("home screen check failed: $it") }
         runCatching {
@@ -2459,6 +2528,15 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
         for (i in 0 until 10) {
             state = guestShell("am get-started-user-state $id 2>&1", 15_000).trim().lines().lastOrNull().orEmpty()
             if (state.contains("RUNNING_UNLOCKED")) break
+            // Added for AEmulator Plus (2026-11-01): UserController should unlock a user without a credential by itself right
+            // after the switch (maybeUnlockUser with an empty token). On the Googlebook image it does not: user 10 stays
+            // RUNNING_LOCKED, no "Unlocking user 10" is ever logged, and the launcher / SystemUI of that user wait for ever
+            // ("User 10 is locked. Cannot load recents", "user not unlocked"). Asked once, after the automatic path had
+            // 6 s; what the system answers goes to the log, so a refusal can be read there.
+            if (i == 3) {
+                log("user $id: still ${state.ifEmpty { "unknown" }} 6 s after the switch, asking for the unlock: " +
+                    guestShell("am unlock-user $id 2>&1", 30_000).trim().lines().take(3).joinToString(" | ").ifEmpty { "(no output)" })
+            }
             Thread.sleep(2_000)
         }
         if (state.contains("RUNNING_UNLOCKED")) { log("user $id: unlocked ($state)"); return }
@@ -2503,6 +2581,29 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
      * start: the reply of that call is lost between the nested oneway callback and the reply, and the service dies with
      * "Unknown exception code" and a "has stopped" dialog on every boot. Nothing here needs network location.
      */
+    /**
+     * Android 14+ with Google Play services: SystemUI binds the shared-connectivity service (Instant Hotspot / Nearby) and calls
+     * registerCallback on it. Play services has no Chimera module config on a first boot here, so the call comes back as
+     * IllegalStateException("Service without Chimera impl"), SharedConnectivityManager does not catch it on SystemUI's main thread,
+     * and SystemUI dies and restarts every 30-60 s (the screen never gets past the setup wizard). Without a bindable service the
+     * manager just stays unconnected, so every component that answers the service's action is disabled, once.
+     */
+    private fun disableSharedConnectivity() {
+        if (img.api < 34) return
+        val marker = File(paths.root, "data/.aemu-sharedconn-disabled")
+        if (marker.isFile) return
+        runCatching {
+            val out = guestShell("export PATH=/system/bin:/system/xbin:\$PATH; cmd package query-services --brief -a android.service.sharedconnectivity.SharedConnectivityService", 60_000)
+            val comps = out.lines().map { it.trim() }.filter { Regex("^[\\w.]+/[\\w.$]+$").matches(it) }.distinct()
+            log("shared connectivity: services answering the action: ${comps.ifEmpty { listOf("none") }.joinToString(", ")}")
+            for (c in comps) {
+                val r = guestShell("export PATH=/system/bin:/system/xbin:\$PATH; pm disable $c", 60_000).trim().lines().lastOrNull().orEmpty()
+                log("shared connectivity: pm disable $c -> $r")
+            }
+            if (comps.isNotEmpty()) marker.writeText("1")
+        }.onFailure { log("shared connectivity: ${it.message}") }
+    }
+
     private fun disableBrokenComponents() {
         if (img.api !in 9..16) return
         val marker = File(paths.root, "data/.aemu-components-disabled2")
@@ -2621,6 +2722,8 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
                             // "Failed to inform zygote of boot_completed" on the android.display thread, dies, and zygote follows with 137
                             if (code == 137 && guestLogHas("Failed to inform zygote of boot_completed"))
                                 failure = Msg("system_server died at the end of the boot: its connect to a zygote socket failed with ENOENT (\"Failed to inform zygote of boot_completed\") although the socket files exist, so the boot finished but the system was killed; zygote exited with 137 as a result. Run with strace on to see which path the connect used")
+                            if (code == 137 && guestLogHas("WiFi display was requested, but there is no WiFi Direct feature"))
+                                failure = Msg("system_server died in WifiDisplayAdapter: WiFi display is enabled by the firmware but android.hardware.wifi.direct is not declared (zygote exited with 137 as a result)")
                             log("✖ $failure"); setState(State.FAILED)
                         } else if (plannedRestart) {
                             plannedRestart = false
@@ -2681,9 +2784,18 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
                     // The engine's SurfaceFlinger (AOSP) died during the boot: with a libgui whose BufferItem is laid out
                     // differently (Google Jamboard, Tegra) FramebufferSurface::nextBuffer reads a garbage slot out of the
                     // item on the very first frame. The firmware's own SurfaceFlinger goes with its own libgui: put it back.
+                    // Modified for AEmulator Plus (2026-11-04): the swap only replaces two files. Everything else the tree fixer
+                    // decides from "which SurfaceFlinger is this" (the gralloc/handle libraries, the graphics HAL set, the
+                    // libgui side) is laid out at the start, so starting SurfaceFlinger again inside this boot ran the
+                    // firmware's compositor against the engine's libraries and the fix only worked after the user started
+                    // the VM by hand, with nothing on screen saying so. Restart the whole VM at once instead; the marker the
+                    // swap leaves makes the tree fixer lay the tree out for the firmware's own SurfaceFlinger.
                     if (name == "surfaceflinger" && code == 139 && bootDoneAt == 0L && engine == Engine.N64 && useFirmwareSurfaceFlinger()) {
-                        val sf = svc ?: servicePlan().firstOrNull { it.name == name }
-                        if (sf != null) { runCatching { startService(sf) }; continue }
+                        if (restartForFirmwareSurfaceFlinger.compareAndSet(false, true)) {
+                            log("✖ surfaceflinger: restarting the VM now so the whole tree is set up for the firmware's own SurfaceFlinger")
+                            onPower?.invoke(true, "")
+                        }
+                        continue
                     }
                     if (name == "surfaceflinger" && svc != null && bootDoneAt > 0 && n < 12) {
                         restarts[name] = n + 1
@@ -2819,13 +2931,22 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
      * engine's does not work with this firmware's libgui (see TreeFixer: the marker keeps it from being replaced again).
      * False when that was already done or there is nothing to put back.
      */
+    private val restartForFirmwareSurfaceFlinger = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun useFirmwareSurfaceFlinger(): Boolean {
         val dir = File(paths.root, "system/.aemu-parked")
         val marker = File(dir, "firmware-sf")
-        if (marker.exists()) return false
+        if (marker.exists()) {
+            log("surfaceflinger: crashed on the first frame although the firmware's own SurfaceFlinger is already in use; nothing left to swap")
+            return false
+        }
         val pairs = listOf("system#bin#surfaceflinger" to "system/bin/surfaceflinger",
             "system#lib64#libsurfaceflinger.so" to "system/lib64/libsurfaceflinger.so")
-        if (pairs.any { !File(dir, it.first).isFile }) return false
+        val missing = pairs.filter { !File(dir, it.first).isFile }.map { it.first }
+        if (missing.isNotEmpty()) {
+            log("surfaceflinger: crashed on the first frame, but the firmware's own copy was not kept aside (missing: ${missing.joinToString()}); cannot swap")
+            return false
+        }
         return runCatching {
             for ((parked, live) in pairs) {
                 val dst = File(paths.root, live)
@@ -3219,13 +3340,23 @@ class GuestVm(val ctx: Context, val img: GuestImage, val lowPowerBoot: Boolean =
             val ids = listOf("ro.product.device", "ro.product.name", "ro.product.system.device", "ro.product.system.name", "ro.product.model", "ro.product.system.model")
                 .mapNotNull { k -> (all[k] ?: later[k])?.takeIf { it.isNotEmpty() } }
             val kalama = ids.any { id -> listOf("dm1q", "dm2q", "dm3q", "SM-S911", "SM-S916", "SM-S918").any { id.startsWith(it) } }
-            val soc = board ?: if (kalama) "kalama" else null
+            // Galaxy S22 family, international (Exynos 2200, "s5e9925"): r0s/g0s/b0s = SM-S901B/E, S906B/E, S908B/E. The same
+            // devices' Snapdragon (taro) models carry other suffixes and keep the generic path
+            val exynos2200 = ids.any { id -> listOf("r0s", "g0s", "b0s").any { id.startsWith(it) } ||
+                Regex("^SM-S90[168][BE]").containsMatchIn(id) }
+            val soc = board ?: if (kalama) "kalama" else if (exynos2200) "exynos2200" else null
             if (soc != null) { later["ro.board.platform"] = soc; log("props: no ro.board.platform in the firmware, set to $soc") }
             // ro.board.platform alone did not stop it (the property reads back as kalama and ChipVendor still aborts), so
             // it asks for another name of the chip. The usual Qualcomm ones, where the firmware has none: the chip's
             // part number (kalama is the Snapdragon 8 Gen 2, SM8550) and the SoC manufacturer.
             if (kalama) {
                 for ((k, v) in listOf("ro.hardware.chipname" to "SM8550", "ro.soc.manufacturer" to "QTI", "ro.soc.model" to "SM8550"))
+                    if ((all[k] ?: later[k]).isNullOrEmpty()) { later[k] = v; log("props: $k=$v (the firmware has none)") }
+            }
+            else if (exynos2200) {
+                // the names an Exynos 2200 gives itself (SoC part s5e9925); the firmware has none on a system-only image
+                for ((k, v) in listOf("ro.hardware.chipname" to "exynos2200", "ro.soc.manufacturer" to "Samsung", "ro.soc.model" to "S5E9925",
+                    "ro.hardware" to "s5e9925", "ro.product.board" to "exynos2200"))
                     if ((all[k] ?: later[k]).isNullOrEmpty()) { later[k] = v; log("props: $k=$v (the firmware has none)") }
             }
             else log("props: no ro.board.platform in the firmware and no board property to take it from")

@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Vinnsluminni gests</string>
     <string name="vs_ram_auto">Sjálfvirkt</string>
+    <string name="vs_ram_host">Hýsill / hám.</string>
+    <string name="vs_ram_custom">Sérsniðið</string>
+    <string name="vs_ram_custom_hint">Magn</string>
     <string name="vs_network">Tilkynnt net</string>
     <string name="vs_network_sub">Það sem stöðustikan sýnir: 2G til LTE. Sjálfgefið er 2G, þar sem ekki allur fastbúnaður ræður við 3G eða nýrra</string>
     <string name="m_network">Net</string>

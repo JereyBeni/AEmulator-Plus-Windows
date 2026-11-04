@@ -1,10 +1,13 @@
-/* Modified for AEmulator Super Plus, 2026-10-11: neighbouring networks and signal level. GPL-3.0; see LICENSE and NOTICE.md. */
+/* Modified for AEmulator Super Plus, 2026-10-11: neighbouring networks and signal level.
+ * Modified for AEmulator Plus, 2026-11-01: Android 8 - 17 (answers typed by the guest's own interface, listener based connect/save/forget). GPL-3.0; see LICENSE and NOTICE.md. */
 package app.aemu.stub;
 
 import android.net.DhcpInfo;
 import android.net.wifi.WifiConfiguration;
 import android.os.Binder;
 import android.os.Handler;
+import android.os.IBinder;
+import android.os.IInterface;
 import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
@@ -26,7 +29,8 @@ import java.util.Map;
  * only accepts its own passphrase.
  *
  * Transaction codes and return types are read from the guest framework's own IWifiManager at start-up, so the same
- * service serves Android 4.0 through 7.1; methods that are not implemented answer "false / 0 / null".
+ * service serves Android 4.0 through 17; methods that are not implemented answer "false / 0 / null" in the type the guest's
+ * interface declares (a long, a String, a list, a binder ... - see {@link #writeDefault}).
  */
 final class WifiService extends Binder {
     static final String DESCRIPTOR = "android.net.wifi.IWifiManager";
@@ -144,11 +148,22 @@ final class WifiService extends Binder {
 
     private static Object wifiSsid(String name) {
         Class<?> c = Refl.cls("android.net.wifi.WifiSsid");
+        byte[] raw;
         try {
-            Object s = Refl.callStatic(c, "createFromHex", Refl.hex(name.getBytes("UTF-8")));
+            raw = name.getBytes("UTF-8");
+        } catch (Throwable t) {
+            raw = name.getBytes();
+        }
+        try {
+            Object s = Refl.callStatic(c, "createFromHex", Refl.hex(raw));
             if (s != null) return s;
         } catch (Throwable ignored) { }
-        return Refl.callStatic(c, "createFromAsciiEncoded", name);
+        Object s = Refl.callStatic(c, "createFromAsciiEncoded", name);
+        // 12+: the factories are named after what they take
+        if (s == null) s = Refl.callStatic(c, "fromBytes", raw);
+        if (s == null) s = Refl.callStatic(c, "createFromByteArray", raw);
+        if (s == null) s = Refl.callStatic(c, "fromUtf8Text", name);
+        return s;
     }
 
     Object wifiInfo() {
@@ -275,6 +290,20 @@ final class WifiService extends Binder {
         }
     }
 
+    /** An empty answer in the type the guest's interface declares: a slice or list with no items, an empty map. */
+    private void writeEmpty(String name, Parcel reply) {
+        Method m = methods.get(name);
+        Class<?> t = m == null ? List.class : m.getReturnType();
+        if (t.getName().endsWith("ParceledListSlice")) writeList(name, new ArrayList<Parcelable>(), reply);
+        else if (Map.class.isAssignableFrom(t)) reply.writeInt(0);
+        else reply.writeTypedList(new ArrayList<Parcelable>());
+    }
+
+    private void writeDefaultBool(String name, Parcel reply) {
+        Method m = methods.get(name);
+        if (m == null || m.getReturnType() != void.class) reply.writeInt(0);
+    }
+
     private static void writeParcelable(Parcel reply, Parcelable p) {
         if (p == null) {
             reply.writeInt(0);
@@ -336,10 +365,10 @@ final class WifiService extends Binder {
                 if (o instanceof Parcelable) list.add((Parcelable) o);
             }
             writeList("getScanResults", list, reply);
-        } else if (name.equals("getConfiguredNetworks")) {
+        } else if (name.equals("getConfiguredNetworks") || name.equals("getPrivilegedConfiguredNetworks")) {
             List<Parcelable> list = new ArrayList<Parcelable>();
             if (saved) list.add(savedConfig());
-            writeList("getConfiguredNetworks", list, reply);
+            writeList(name, list, reply);
         } else if (name.equals("getDhcpInfo")) {
             writeParcelable(reply, dhcpInfo());
         } else if (name.equals("addOrUpdateNetwork")) {
@@ -373,16 +402,126 @@ final class WifiService extends Binder {
         } else if (name.equals("pingSupplicant") || name.equals("saveConfiguration") || name.equals("isScanAlwaysAvailable")
                 || name.equals("acquireWifiLock")) {
             reply.writeInt(1);
+        } else if (name.equals("getPasspointConfigurations") || name.equals("getMatchingWifiConfig")
+                || name.equals("getMatchingOsuProviders") || name.equals("getAllowedDevices")
+                || name.equals("getHotspotClients")) {
+            // no Passpoint profiles, OSU providers or hotspot clients here. 8.1 Settings walks getPasspointConfigurations()
+            // without a null check, so these must be real empty collections, not null.
+            writeEmpty(name, reply);
+        } else if (name.equals("getSupportedFeatures")) {
+            // WIFI_FEATURE_INFRA (0x1): plain infrastructure mode only. A long on 8+, an int before.
+            Method fm = methods.get(name);
+            if (fm != null && fm.getReturnType() == long.class) reply.writeLong(1L); else reply.writeInt(1);
+        } else if (name.equals("reportActivityInfo")) {
+            writeParcelable(reply, null); // no controller energy counters to report
+        } else if (name.equals("requestActivityInfo")) {
+            // the ResultReceiver gets an empty bundle: the caller treats it as "no data"
+            try {
+                if (data.readInt() != 0) {
+                    android.os.ResultReceiver rr = android.os.ResultReceiver.CREATOR.createFromParcel(data);
+                    rr.send(0, new android.os.Bundle());
+                }
+            } catch (Throwable t) {
+                Refl.log("requestActivityInfo: " + t);
+            }
+        } else if (name.equals("stopSoftAp") || name.equals("stopLocalOnlyHotspot") || name.equals("enableAggressiveHandover")) {
+            reply.writeInt(1);
+        } else if (name.equals("startSoftAp") || name.equals("setWifiApEnabled")) {
+            writeDefaultBool(name, reply); // there is no AP mode
+        } else if (name.equals("getVerboseLoggingLevel") || name.equals("getAggressiveHandover")) {
+            reply.writeInt(0);
+        } else if (name.equals("getCurrentNetwork")) {
+            writeParcelable(reply, null); // no Network handle is exposed for the emulated link
         } else if (name.equals("startScan")) {
             LegacyWifi lg = legacy;
             if (lg != null) lg.scanDone();
+            Method sm = methods.get(name);
+            if (sm != null && sm.getReturnType() == boolean.class) reply.writeInt(1); // 10+: boolean startScan(...)
         } else if (name.toLowerCase().contains("messenger")) {
             // 4.0 hands WifiManager the state machine's messenger (getWifiStateMachineMessenger), 4.1+ the service's
             writeParcelable(reply, messenger);
+        } else if ((name.equals("connect") || name.equals("save") || name.equals("forget")) && listenerCall(name, data)) {
+            // answered through the caller's IActionListener (10+)
         } else {
             if (unhandled.add(name)) Refl.log("not implemented, answering 0/null: " + name);
-            reply.writeInt(0);
+            writeDefault(name, reply);
         }
+    }
+
+    /**
+     * The answer of a method this service does not implement, in the type the guest's own interface returns: a boolean or an int
+     * is 0, a long is 0L, a String, an array, a list or a parcelable is null, a binder is null. Writing one int for everything (as
+     * before) shifts the reader of a long and makes a null binder unreadable: 8+ asks for getSupportedFeatures() (a long) and
+     * many callbacks registrations first thing.
+     */
+    private void writeDefault(String name, Parcel reply) {
+        Method m = methods.get(name);
+        Class<?> t = m == null ? int.class : m.getReturnType();
+        if (t == void.class) return;
+        if (t == long.class) reply.writeLong(0L);
+        else if (t == float.class) reply.writeFloat(0f);
+        else if (t == double.class) reply.writeDouble(0d);
+        else if (t == boolean.class || t == int.class || t == short.class || t == byte.class || t == char.class) reply.writeInt(0);
+        else if (t == String.class) reply.writeString(null);
+        else if (t == CharSequence.class) reply.writeInt(0);
+        else if (t.isArray()) reply.writeInt(-1);
+        else if (List.class.isAssignableFrom(t)) reply.writeInt(-1);
+        else if (IBinder.class.isAssignableFrom(t) || IInterface.class.isAssignableFrom(t)) reply.writeStrongBinder(null);
+        else reply.writeInt(0); // a nullable parcelable (or anything else the old way)
+    }
+
+    /**
+     * Android 10+ (and 8 with the same generated names): connect / save / forget do not use the messenger channel but take
+     * an IActionListener. The parameters are read in the order the guest's interface declares them (a WifiConfiguration, the
+     * network id, a binder token, the listener, a callback id: it differs between 10, 11 and 12+).
+     * Returns false when the method has no listener parameter (the messenger channel of 4.x - 9 is used then).
+     */
+    private boolean listenerCall(String name, Parcel data) {
+        Method m = methods.get(name);
+        Class<?> al = Refl.cls("android.net.wifi.IActionListener");
+        if (m == null || al == null) return false;
+        Class<?>[] pt = m.getParameterTypes();
+        boolean has = false;
+        for (Class<?> p : pt) if (p == al) has = true;
+        if (!has) return false;
+        WifiConfiguration c = null;
+        int netId = -1;
+        boolean haveId = false;
+        Object listener = null;
+        for (Class<?> p : pt) {
+            if (p == WifiConfiguration.class) c = readConfig(data);
+            else if (p == int.class) { int v = data.readInt(); if (!haveId) { netId = v; haveId = true; } }
+            else if (p == boolean.class) data.readInt();
+            else if (p == String.class) data.readString();
+            else if (p == IBinder.class) data.readStrongBinder();
+            else if (p == al) {
+                IBinder b = data.readStrongBinder();
+                try {
+                    Class<?> stub = Class.forName(al.getName() + "$Stub");
+                    listener = b == null ? null : stub.getMethod("asInterface", IBinder.class).invoke(null, b);
+                } catch (Throwable t) {
+                    Refl.log("IActionListener: " + t);
+                }
+            } else break;
+        }
+        boolean ok;
+        if (name.equals("forget")) {
+            if (netId == NET_ID) { saved = false; update(); }
+            ok = true;
+        } else {
+            if (c != null) ok = credentialsOk(c);
+            else ok = netId == NET_ID && saved || Boolean.TRUE.equals(addedOk.get(Integer.valueOf(netId)));
+            if (ok) {
+                saved = true;
+                if (name.equals("connect")) down = false;
+                update();
+            }
+        }
+        if (listener != null) {
+            if (ok) Refl.call(listener, "onSuccess");
+            else Refl.call(listener, "onFailure", Integer.valueOf(0));
+        }
+        return true;
     }
 
     // ------------------------------------------------------------------ the AsyncChannel WifiManager.connect()/save()/forget() use

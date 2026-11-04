@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM госта</string>
     <string name="vs_ram_auto">Аутоматски</string>
+    <string name="vs_ram_host">Домаћин / макс.</string>
+    <string name="vs_ram_custom">Прилагођено</string>
+    <string name="vs_ram_custom_hint">Количина</string>
     <string name="vs_network">Пријављена мрежа</string>
     <string name="vs_network_sub">Оно што приказује статусна трака: од 2G до LTE. Подразумевано 2G, јер не подржава сваки фирмвер 3G или новије</string>
     <string name="m_network">Мрежа</string>

@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">ゲストRAM</string>
     <string name="vs_ram_auto">自動</string>
+    <string name="vs_ram_host">ホスト / 最大</string>
+    <string name="vs_ram_custom">カスタム</string>
+    <string name="vs_ram_custom_hint">容量</string>
     <string name="vs_radio_title">無線</string>
     <string name="vs_radio">無線モジュールをエミュレート</string>
     <string name="vs_radio_sub">通話、IMEI、電波。オフ：ファームウェアはWi-Fiタブレットのように動作します</string>

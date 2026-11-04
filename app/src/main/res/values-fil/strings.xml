@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM ng guest</string>
     <string name="vs_ram_auto">Awtomatiko</string>
+    <string name="vs_ram_host">Host / max</string>
+    <string name="vs_ram_custom">Custom</string>
+    <string name="vs_ram_custom_hint">Halaga</string>
     <string name="vs_network">Iniulat na network</string>
     <string name="vs_network_sub">Ang ipinapakita ng status bar: 2G hanggang LTE. Default ang 2G, dahil hindi lahat ng firmware ay kayang humawak ng 3G o mas bago</string>
     <string name="m_network">Network</string>

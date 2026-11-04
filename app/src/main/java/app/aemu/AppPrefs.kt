@@ -1,5 +1,6 @@
 /* Modified for AEmulator Sunset, 2026-10-03: cross-process display options.
- * Modified for AEmulator Plus, 2026-10-12: Holo navigation bar flag for VM themes (merged from Super Plus). GPL-3.0. */
+ * Modified for AEmulator Plus, 2026-10-12: Holo navigation bar flag for VM themes (merged from Super Plus).
+ * Modified for AEmulator Plus, 2026-11-01: stored library arrangement. GPL-3.0. */
 package app.aemu
 
 import android.content.Context
@@ -131,6 +132,10 @@ object AppPrefs {
     /** New grid home screen (default) instead of the classic card list. */
     fun newHome(ctx: Context): Boolean = sp(ctx).getBoolean("new_home", true)
     fun setNewHome(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("new_home", v).apply()
+
+    /** The user's arrangement of the library (order and folders) as JSON; null until something is arranged. */
+    fun libraryLayout(ctx: Context): String? = sp(ctx).getString("library_layout", null)
+    fun setLibraryLayout(ctx: Context, json: String) = sp(ctx).edit().putString("library_layout", json).apply()
 
     fun lastUpdateCheck(ctx: Context): Long = sp(ctx).getLong("last_update_check", 0L)
     fun setLastUpdateCheck(ctx: Context, v: Long) = sp(ctx).edit().putLong("last_update_check", v).apply()

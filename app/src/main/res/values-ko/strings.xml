@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">게스트 RAM</string>
     <string name="vs_ram_auto">자동</string>
+    <string name="vs_ram_host">호스트 / 최대</string>
+    <string name="vs_ram_custom">사용자 지정</string>
+    <string name="vs_ram_custom_hint">용량</string>
     <string name="vs_radio_title">무선</string>
     <string name="vs_radio">무선 모듈 에뮬레이션</string>
     <string name="vs_radio_sub">전화, IMEI, 신호. 끄면 펌웨어가 Wi-Fi 태블릿처럼 동작합니다</string>

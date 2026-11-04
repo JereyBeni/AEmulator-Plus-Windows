@@ -140,7 +140,63 @@ class TreeFixer(
      * (a real /system is read-only), and the next boot died in system_server with "No original dex files found".
      * Taking the write bit away makes such writes fail harmlessly; ImageStore.wipe gives it back before deleting.
      */
+    /**
+     * The framework's precompiled code has no other copy (the jars are stripped), and on the native engine of a release
+     * before 10 it disappears from a container after a day, a week: system/framework/oat/arm is found empty while the boot
+     * images next to it are intact, and system_server dies in the class loader ("No original dex files found"). Whatever
+     * removes the files (it needed the folder writable, so it is not the guest at its start), a second name for each of them
+     * is kept in system/.aemu-oat (a hard link: no space; a copy where the link is refused), and a file that is gone from
+     * its folder is put back at the next start. What is there and not yet kept, or kept at another size (a firmware update),
+     * is kept. A file changed in place, to the same size, changes its kept name too: the write bit is what stops that.
+     */
+    private fun keepOatCopies() = runCatching {
+        val sys = File(root, "system")
+        val store = File(sys, ".aemu-oat")
+        fun walk(d: File, out: MutableList<File>) {
+            d.listFiles()?.forEach { f -> if (f.isDirectory) walk(f, out) else if (f.isFile) out.add(f) }
+        }
+        fun open(d: File) {
+            d.listFiles()?.forEach { if (it.isDirectory) open(it) }
+            d.setWritable(true, false)
+        }
+        fun link(from: File, to: File): Boolean {
+            to.parentFile?.mkdirs()
+            if (runCatching { Os.link(from.absolutePath, to.absolutePath) }.isSuccess) return true
+            return runCatching { from.copyTo(to, overwrite = true) }.isSuccess
+        }
+        var saved = 0
+        var back = 0
+        val fw = File(sys, "framework")
+        for (name in listOf("oat", "arm", "arm64")) {
+            val live = File(fw, name)
+            val keep = File(store, "framework/$name")
+            if (!live.isDirectory && !keep.isDirectory) continue
+            if (live.isDirectory) open(live) else live.mkdirs()
+            // 1. what is kept and gone from its folder comes back
+            val kept = ArrayList<File>()
+            walk(keep, kept)
+            for (k in kept) {
+                val f = File(live, k.relativeTo(keep).path)
+                if (f.exists()) continue
+                f.parentFile?.mkdirs()
+                if (link(k, f)) { f.setReadable(true, false); back++ }
+            }
+            // 2. what is there and not yet kept (or kept at another size) is kept
+            val now = ArrayList<File>()
+            walk(live, now)
+            for (f in now) {
+                val k = File(keep, f.relativeTo(live).path)
+                if (k.isFile && k.length() == f.length()) continue
+                k.delete()
+                if (link(f, k)) saved++
+            }
+        }
+        if (back > 0) log("framework oat: $back files of the firmware's precompiled code were gone and are put back from system/.aemu-oat")
+        if (saved > 0) log("framework oat: $saved files kept in system/.aemu-oat")
+    }.onFailure { log("framework oat: copies not kept: ${it.message}") }
+
     private fun protectOat() {
+        keepOatCopies()
         val sys = File(root, "system")
         var n = 0
         fun lock(d: File) {
@@ -228,6 +284,7 @@ class TreeFixer(
         selinuxOff()
         surfaceGuard()
         surfaceFlingerGuard()
+        btiGuard()
         executableCodeCache()
         glassGestureGuard()
         glassBluetoothPark()
@@ -775,6 +832,36 @@ class TreeFixer(
         String(File(root, "system/$lib/libgui.so").readBytes(), Charsets.ISO_8859_1).contains("invalid gralloc handle (at %p)")
     }.getOrDefault(false)
 
+    /**
+     * Added for AEmulator Plus (2026-11-02): the phone's GPU for a 32-bit-only firmware translated by qemu-arm on the native
+     * engine. Until now only the 64-bit side had the GPU bridge (libGLES_aemu.so in lib64, played by GlHost): a 32-bit-only
+     * firmware has no lib64, so its programs drew with the 32-bit SwiftShader inside the translator (about a frame a second).
+     * The armv7 build of the same bridge (engines/kk/libGLES_aemu.so, native/glbridge/build32.sh) goes next to the 32-bit
+     * SwiftShader, which it keeps behind it for the compositor, GLES 1 and the contexts it does not take. It talks to the very
+     * same host renderer through /dev/socket/aemu_gl. Without the GPU option, a kernel with no bridge or no 32-bit SwiftShader
+     * the files are removed again (libEGL would otherwise find them by scanning).
+     */
+    private fun installPure32GpuBridge(haveSwiftShader: Boolean) {
+        // (Treble releases, 8.0+, only: 7.x libEGL on an emulated kernel loads the "emulation" name and nothing else, and the
+        // way the 64-bit bridge gets in there is not carried over to the 32-bit side untested)
+        val want = img.settings.gpu && kernel.gpuBridge64 && kernel.treble && haveSwiftShader && assetSize(OPEN_GL) > 0
+        val bridge = File(root, "${kernel.eglDir32}/libGLES_aemu.so")
+        val emulation = File(root, "${kernel.emulationDir32}/libGLES_emulation.so")
+        val emulationWanted = want && kernel.bridgeAsEmulation
+        if (!want) {
+            for (f in listOf(bridge, emulation)) if (isLink(f)) Os.remove(f.absolutePath) else if (f.isFile) f.delete()
+            if (img.settings.gpu && kernel.gpuBridge64 && kernel.treble) log("GPU (32-bit firmware): no bridge installed (${if (haveSwiftShader) "bridge asset missing" else "no 32-bit SwiftShader or not the engine's gralloc"}), software rendering")
+            return
+        }
+        runCatching {
+            bridge.parentFile?.mkdirs()
+            installAsset(OPEN_GL, bridge)
+            if (emulationWanted) { emulation.parentFile?.mkdirs(); installAsset(OPEN_GL, emulation) }
+            else if (isLink(emulation)) Os.remove(emulation.absolutePath) else if (emulation.isFile) emulation.delete()
+            log("GPU (32-bit firmware): bridge in ${bridge.parentFile?.relativeTo(root)?.path}")
+        }.onFailure { log("GPU (32-bit firmware): bridge failed to install: ${it.message}") }
+    }
+
     private fun installNative64() {
         // engines/n64-<kernel>: AOSP's own SurfaceFlinger for that release. The vendors' ones (MIUI's blur, Qualcomm's
         // ExSurfaceFlinger) need the GPU's GLES 2 and show no windows on the software renderer. For a Treble release
@@ -1056,6 +1143,14 @@ class TreeFixer(
                 copied++
             }.onFailure { log("$n: ${it.message}") }
         }
+        // (the bridge reads the engine's note out of every window buffer's handle: only where the 32-bit gralloc in place is the
+        // engine's own, whose handle layout it knows - a firmware's vendor gralloc would be read through the wrong offsets)
+        val engineGralloc32 = listOf("vendor#lib#hw#gralloc.default.so", "system#lib#hw#gralloc.default.so").any { n ->
+            val a = files[n]; val f = File(root, n.replace('#', '/'))
+            a != null && f.isFile && runCatching { sameContent(a, f) }.getOrDefault(false)
+        }
+        if (pure32) installPure32GpuBridge(
+            (files.containsKey("system#lib#egl#libEGL_swiftshader.so") || File(root, "${kernel.eglDir32}/libEGL_swiftshader.so").isFile) && engineGralloc32)
         // SwiftShader's libEGL finds its GLES libraries by their own names, so the name this release's libEGL asks
         // for is a link to them
         if (kernel.eglName != "swiftshader") listOf(kernel.eglDir, "system/lib/egl").flatMap { File(root, it).listFiles().orEmpty().toList() }.filter { it.name.endsWith("_swiftshader.so") }.forEach { f ->
@@ -1248,6 +1343,19 @@ class TreeFixer(
                 jar.setReadable(true, false); copied++
             }
         }.onFailure { log("aemu-stubs.jar: ${it.message}") }
+        // the emulated Wi-Fi (WifiEmu): the same dex jar as for the 32-bit guests; the guest's own IWifiManager is read at run time.
+        // Installed for 8 - 17 only; GuestVm starts it when the setting is on, and the jar of a guest that was switched off stays unused
+        runCatching {
+            val jar = File(root, WifiEmu.JAR_PATH)
+            if (img.api in WifiEmu.TREBLE_MIN_API..WifiEmu.TREBLE_MAX_API) {
+                val bytes = eaOpen("engines/kk/${WifiEmu.JAR_NAME}").use { it.readBytes() }
+                if (!jar.isFile || !jar.readBytes().contentEquals(bytes)) {
+                    jar.parentFile?.mkdirs()
+                    jar.writeBytes(bytes)
+                    jar.setReadable(true, false); copied++
+                }
+            } else jar.delete()
+        }.onFailure { log("${WifiEmu.JAR_NAME}: ${it.message}") }
         if (copied > 0) log("engine n64 files updated: $copied")
         // qemu-arm (the firmware's 32-bit programs) asks for the lowest mappable address; the phone hides the real file
         // (a static 32-bit program of the firmware, healthd, is linked at 0x8000: with 65536 qemu-arm refuses to load it
@@ -1348,10 +1456,39 @@ class TreeFixer(
             // ConnectivityServiceInitializer.onBootPhase(500) and ends system_server. There is no Thread radio, so the
             // feature is declared unavailable and the service is never created.
             val thread = File(root, "apex/com.android.tethering").isDirectory
+            // Modified for AEmulator Plus (2026-11-02): Face Unlock. A desktop image (HP Googlebook, Android 17) declares
+            // android.hardware.biometrics.face but has no face HAL program that init would start: the AOSP "virtual" one
+            // lives in an APEX and is "disabled" in its rc, and the board's own HAL is not in the tree. system_server still
+            // starts FaceService, which adds the "virtual" instance on its own, maps IFace/virtual to
+            // android.hardware.biometrics.face.virtualhal.IVirtualHal/virtual and waits for that service with no timeout
+            // ("Waited one second for ...face.virtualhal.IVirtualHal/virtual", hundreds of lines): the setup wizard's face
+            // page and Settings then block binder threads of system_server and the boot looks stuck. With no face HAL the
+            // feature is declared unavailable, FaceService is not started and the setup wizard skips its Face Unlock page.
+            // A tree that has a face HAL program of its own (not an APEX one) keeps the declaration.
+            val faceDead = kernel.treble && img.api >= 29 &&
+                listOf("vendor/bin/hw", "system/vendor/bin/hw", "system/bin/hw", "system_ext/bin/hw", "system/system_ext/bin/hw", "odm/bin/hw", "system/odm/bin/hw").none { d ->
+                    File(root, d).listFiles().orEmpty().any { it.name.startsWith("android.hardware.biometrics.face") && (it.isFile || isLink(it)) }
+                }
+            if (faceDead) log("face: no face HAL program in the tree, android.hardware.biometrics.face declared unavailable (FaceService would wait for ever for IVirtualHal/virtual)")
             val un = kernel.absentFeatures.filter { it.startsWith("bluetooth") } +
-                (if (cecHal) listOf("hdmi.cec") else emptyList()) + (if (thread) listOf("thread_network") else emptyList())
+                (if (cecHal) listOf("hdmi.cec") else emptyList()) + (if (thread) listOf("thread_network") else emptyList()) +
+                (if (faceDead) listOf("biometrics.face") else emptyList())
             if (un.isEmpty()) f.delete()
             else f.writeText("<permissions>" + un.joinToString("") { "<unavailable-feature name=\"android.hardware.$it\" />" } + "</permissions>")
+        }
+        // Wi-Fi Display: a Samsung overlay (One UI 8, api 36) sets config_enableWifiDisplay, and WifiDisplayAdapter's
+        // constructor then throws "WiFi display was requested, but there is no WiFi Direct feature" on the android.display
+        // thread, which ends system_server (zygote follows with 137). No firmware file declares wifi.direct here, so the
+        // feature is declared; the flag is only the adapter's precondition, the engine has no P2P radio behind it.
+        File(root, "system/etc/permissions/aemu-wifi-direct.xml").let { f ->
+            val declared = listOf("system/etc/permissions", "vendor/etc/permissions", "system/vendor/etc/permissions").any { d ->
+                File(root, d).listFiles()?.any { it.isFile && it.name != f.name && it.name.endsWith(".xml") &&
+                    runCatching { it.readText().contains("android.hardware.wifi.direct") && !it.readText().contains("unavailable-feature name=\"android.hardware.wifi.direct") }.getOrDefault(false) } == true
+            }
+            if (img.api >= 34 && !declared) {
+                f.writeText("<permissions><feature name=\"android.hardware.wifi.direct\" /></permissions>")
+                log("wifi display: android.hardware.wifi.direct declared (WifiDisplayAdapter refuses to start without it)")
+            } else f.delete()
         }
         // Qualcomm location core loads its modem (QMI) back end by name and crashes inside it without a modem;
         // with the back end gone it keeps its built-in do-nothing one
@@ -1400,8 +1537,11 @@ class TreeFixer(
         restorePeripheralIo()
         parkSensorsHalOfPure32Treble()
         parkBoardAidlSensorsHal()
+        parkSensorsHalWithoutImpl()
         parkEngineAudioHostOfFirmwareWithOwnAudio()
+        fixAudioHostImplLookupOfPure32Treble()
         parkCodec2HalOfPure32Treble()
+        parkVendorHalsThatCannotLink()
         parkHalsWithoutModuleOfPure32Treble()
         disableTeeKeyMint()
         dropHalsWithoutService()
@@ -1600,7 +1740,70 @@ class TreeFixer(
         // The mapper and the libraries it is built against go in as one set, from the engine's VNDK directory.
         val stackSet = listOf("android.hardware.graphics.mapper@2.0.so", "android.hardware.graphics.common@1.0.so", "libhidlbase.so",
             "libhwbinder.so", "libhidltransport.so")
-        if (File(root, "vendor/lib64/hw/android.hardware.graphics.mapper@2.0-impl.so").isFile &&
+        // Modified for AEmulator Plus (2026-11-02). The swap below is only right for a board whose own vendor libraries are of the
+        // old stack too, or that has none of its own (the 15+ boards it was made for). A board of 11 - 14 with a VNDK package ships
+        // HAL libraries built for the NEW stack (BnHwBase::checkSubclass, IBase::interfaceChain, getRequestingSid... all live in
+        // its libhidlbase), and the engine's old libhidlbase in /vendor/lib64 is found first by the vendor namespace, so every one of
+        // them fails to link ("cannot locate symbol _ZNK7android4hidl4base4V1_08BnHwBase13checkSubclassEPKv referenced by
+        // /vendor/lib64/android.hardware.gatekeeper@1.0.so", health@2.1, keymaster@3.0, usb, light, display.color... exit code 1,
+        // restarted 12 times) and the old libbase brought by the closure copy below leaves vndservicemanager without
+        // android::base::LogMessage. So the swap is skipped when a vendor HIDL library imports a symbol the engine's libhidlbase
+        // does not define, and what an earlier start put there is taken out again.
+        val newStackSym = "_ZNK7android4hidl4base4V1_08BnHwBase13checkSubclassEPKv"
+        val vendorNeedsNewStack = runCatching {
+            val engineDefs = ElfPatch.dynSyms64(File(root, "$vndkDir/libhidlbase.so"))?.defined
+            engineDefs != null && newStackSym !in engineDefs &&
+                File(root, "vendor/lib64").listFiles().orEmpty().any { f ->
+                    f.isFile && f.name.endsWith(".so") && f.name !in stackSet && f.name.contains('@') &&
+                        runCatching { ElfPatch.dynSyms64(f)?.undefined?.contains(newStackSym) == true }.getOrDefault(false)
+                }
+        }.getOrDefault(false)
+        if (vendorNeedsNewStack) {
+            val origDir = File(root, "system/.aemu-vintf-orig")
+            val undone = ArrayList<String>()
+            // libhwbinder / libhidltransport are the engine's stand-ins, laid again at every start before this runs
+            for (n in stackSet) {
+                val dst = File(root, "vendor/lib64/$n")
+                val keep = File(origDir, dst.relativeTo(root).path.replace('/', '#'))
+                runCatching {
+                    if (keep.isFile) {
+                        dst.setWritable(true); keep.copyTo(dst, overwrite = true)
+                        dst.setReadable(true, false); dst.setExecutable(true, false); undone += n
+                    } else if (!isEngineStandIn(dst)) {
+                        val src = File(root, "$vndkDir/$n")
+                        if (dst.isFile && src.isFile && dst.length() == src.length() && dst.readBytes().contentEquals(src.readBytes()) && dst.delete()) undone += n
+                    }
+                }.onFailure { log("GL: $n could not be taken out of /vendor/lib64: ${it.message}") }
+            }
+            log("GL: the board's vendor HIDL libraries are built for the new stack, the engine's old one is not put into /vendor/lib64" +
+                (if (undone.isEmpty()) "" else " (taken out again: ${undone.joinToString()})"))
+        }
+        // Added for AEmulator Plus (2026-11-02). Earlier starts (and the closure copy below, on a tree without a VNDK package) left
+        // the engine's OLD libbase / libutils / libcutils... of aemu-vndk in /vendor/lib64, where the vendor namespace finds them before
+        // anything else. A board of the new stack then cannot link: "cannot locate symbol _ZN7android4base10LogMessageC1EPKcjNS0_
+        // 11LogSeverityES3_i referenced by /vendor/bin/vndservicemanager", "...ShouldLog", "...sp_report_stack_pointerEv", "set_sched_policy
+        // referenced by /vendor/lib64/libutils.so". A byte-identical copy of the engine's library is not the vendor's own: it goes, and
+        // the VNDK package (or, without one, the firmware's own copy in system/lib64) provides the library again.
+        if (vendorNeedsNewStack) {
+            val gone = ArrayList<String>(); val fixed = ArrayList<String>()
+            for (f in File(root, "vendor/lib64").listFiles().orEmpty()) {
+                if (!f.isFile || !f.name.endsWith(".so") || f.name in stackSet) continue
+                val engineCopy = File(root, "$vndkDir/${f.name}")
+                if (!engineCopy.isFile || engineCopy.length() != f.length()) continue
+                if (!runCatching { f.readBytes().contentEquals(engineCopy.readBytes()) }.getOrDefault(false)) continue
+                val fwCopy = listOf("system/lib64", "system/vendor/lib64").map { File(root, "$it/${f.name}") }.firstOrNull { it.isFile }
+                runCatching {
+                    f.setWritable(true)
+                    if (hasVndkPackage) { if (f.delete()) gone += f.name }
+                    else if (fwCopy != null) {
+                        fwCopy.copyTo(f, overwrite = true); f.setReadable(true, false); f.setExecutable(true, false); fixed += f.name
+                    }
+                }.onFailure { log("GL: stale ${f.name} could not be cleaned out of /vendor/lib64: ${it.message}") }
+            }
+            if (gone.isNotEmpty()) log("GL: the engine's old libraries taken out of /vendor/lib64 (the VNDK package has them): ${gone.joinToString()}")
+            if (fixed.isNotEmpty()) log("GL: the engine's old libraries in /vendor/lib64 replaced by the firmware's own: ${fixed.joinToString()}")
+        }
+        if (!vendorNeedsNewStack && File(root, "vendor/lib64/hw/android.hardware.graphics.mapper@2.0-impl.so").isFile &&
             stackSet.all { File(root, "$vndkDir/$it").isFile }) {
             val origDir = File(root, "system/.aemu-vintf-orig")
             val swapped = ArrayList<String>()
@@ -1627,8 +1830,24 @@ class TreeFixer(
             for (n in elfNeeded64(cur)) {
                 if (n in llndk || n in seen) continue
                 val inVendor = File(root, "vendor/lib64/$n")
+                if (inVendor.isFile && vendorNeedsNewStack) {
+                    // a copy of the engine's old library that an earlier start left here is put right by the firmware's own
+                    val engineCopy = File(root, "$vndkDir/$n")
+                    val fwCopy = listOf("system/lib64", "system/vendor/lib64").map { File(root, "$it/$n") }.firstOrNull { it.isFile }
+                    if (fwCopy != null && engineCopy.isFile && inVendor.length() == engineCopy.length() &&
+                        inVendor.length() != fwCopy.length() && runCatching { inVendor.readBytes().contentEquals(engineCopy.readBytes()) }.getOrDefault(false)) {
+                        runCatching {
+                            inVendor.setWritable(true); fwCopy.copyTo(inVendor, overwrite = true)
+                            inVendor.setReadable(true, false); inVendor.setExecutable(true, false)
+                            brought += "$n (firmware's)"
+                        }.onFailure { log("GL: $n could not be put right in /vendor/lib64: ${it.message}") }
+                    }
+                }
                 if (inVendor.isFile) { queue.add(inVendor); continue }
-                val src = listOf(vndkDir, "system/lib64", "system/vendor/lib64").map { File(root, "$it/$n") }.firstOrNull { it.isFile }
+                // (a board of the new stack takes the firmware's own copy first: the engine's old libbase / libutils / libcutils lack
+                // symbols its vendor programs import, e.g. android::base::LogMessage of vndservicemanager)
+                val srcDirs = if (vendorNeedsNewStack) listOf("system/lib64", "system/vendor/lib64", vndkDir) else listOf(vndkDir, "system/lib64", "system/vendor/lib64")
+                val src = srcDirs.map { File(root, "$it/$n") }.firstOrNull { it.isFile }
                 if (src == null) { if (n !in missing) missing += n; continue }
                 runCatching {
                     src.copyTo(inVendor, overwrite = true)
@@ -2028,7 +2247,7 @@ class TreeFixer(
             // has no service in the tree. Declared, it makes SoundTriggerMiddlewareService of system_server block its main thread
             // in ServiceManager.waitForService() until the watchdog kills system_server after 65 s (boot loop). The engine's own
             // HIDL sound trigger host (aemu-soundtrigger) is the only one that may be declared.
-            "android.hardware.soundtrigger3")
+            "android.hardware.soundtrigger3") + parkedHalPackages()
         val written = ArrayList<String>()
         for (pf in parked) {
             runCatching {
@@ -2484,7 +2703,7 @@ class TreeFixer(
         // Modified for AEmulator Plus (2026-10-31): the plain "android.hardware.security.keymint-service" (Android 17 desktop images)
         // is parked too. Its declaration is dropped below, so it started anyway, got a failed addService (status -3) from
         // servicemanager and aborted ("Check failed: status == STATUS_OK", signal 6) on every boot.
-        val teeService = Regex("^android\\.hardware\\.security\\.keymint(@[0-9.]+-service(\\..*)?|-service([.-]qti)?)$")
+        val teeService = TEE_KEYMINT_SERVICE
         var parkedBins = 0
         val seenBins = HashSet<String>()
         for (dir in listOf("vendor/bin/hw", "system/vendor/bin/hw", "odm/bin/hw")) {
@@ -2665,6 +2884,36 @@ class TreeFixer(
         if (n > 0) log("sensors: the board's AIDL sensors HAL is not declared (the engine's sensors@1.0 is) and has no hub here, it is set aside ($n)")
     }
 
+    /**
+     * Added for AEmulator Plus (2026-11-04). Android 14 GSI whose vendor side declares only the HIDL android.hardware.sensors@1.0
+     * HAL: the layer's sensors host (aemu-sensors-host; the arm32 copy also under the name ...-service-mediatek) dlopen()s the
+     * implementation library android.hardware.sensors@1.0-impl[-mediatek].so and calls HIDL_FETCH_ISensors on it. Where no such
+     * library is in the tree (the board's MediaTek one needs its sensorhub daemon and is not there on a GSI) the host logs
+     * "dlopen ...: library not found" / "required HAL 0 failed, giving up" and exits with 1 at once, so the declared ISensors/default
+     * never registers. Android 14's SensorService waits for a declared HAL, SystemSensorManager.nativeCreate blocks system_server's
+     * main thread (reached from DeviceStateProviderImpl) and the Watchdog kills it after 65 s, in a loop.
+     *
+     * With no implementation library the service cannot work whatever it is called, so its program goes aside (the rc stays, as in
+     * parkSensorsHalOfPure32Treble()); dropHalsWithoutService() then sees a declared HAL whose service program is missing and takes
+     * the declaration out of the manifests, and SensorService runs without sensors. Judged on every start, so an engine that ships
+     * the implementation gets the service and the declaration back. An AIDL sensors HAL in the tree is left to its own rules.
+     */
+    private fun parkSensorsHalWithoutImpl() {
+        if (!kernel.treble) return
+        val services = hwPrograms("android.hardware.sensors@1.0-service")
+        if (services.isEmpty()) return
+        // the host loads the implementation with the architecture of the guest's programs
+        val libDirs = if (isPure32Tree(root)) listOf("vendor/lib/hw", "system/vendor/lib/hw", "odm/lib/hw", "system/lib/hw")
+            else listOf("vendor/lib64/hw", "system/vendor/lib64/hw", "odm/lib64/hw", "system/lib64/hw")
+        val impl = libDirs.any { d ->
+            File(root, d).list().orEmpty().any { it.startsWith("android.hardware.sensors@1.0-impl") && it.endsWith(".so") }
+        }
+        if (impl) return
+        var n = 0
+        for (f in services) if (parkFile(f)) n++
+        if (n > 0) log("sensors: no android.hardware.sensors@1.0-impl in the tree, so the sensors host cannot register ISensors; its service is set aside ($n) and the declaration is dropped, the guest runs without sensors")
+    }
+
     /** vendor/bin/hw programs of the tree (vendor, system/vendor and system/bin/hw) whose name starts with [prefix] */
     private fun hwPrograms(prefix: String): List<File> =
         listOf("vendor/bin/hw", "system/vendor/bin/hw", "system/bin/hw").flatMap { d ->
@@ -2705,13 +2954,51 @@ class TreeFixer(
      */
     private fun parkEngineAudioHostOfFirmwareWithOwnAudio() {
         if (!kernel.treble) return
-        if (hwPrograms("android.hardware.audio.service").isEmpty()) return
+        val boardAudio = hwPrograms("android.hardware.audio.service")
+        if (boardAudio.isEmpty()) return
+        // Added for AEmulator Plus (2026-11-02). A board of 8 - 11 (Qualcomm) has a 32-bit audio service whose HAL implementation is
+        // 32-bit too. The engine's manifest declares audio@4.0 and the engine's 4.0 implementation is 64-bit only, so the board's
+        // service finds no implementation it can load ("Could not get passthrough implementation for
+        // android.hardware.audio@4.0::IDevicesFactory/default", "Could not register Audio Core API", exit code 134, restarted 12
+        // times, AudioFlinger waits for IDevicesFactory/default). Its Qualcomm back end needs the DSP, which is not here anyway. The
+        // engine's 64-bit host (software audio, registers 4.0 and 2.0, effects 4.0) is the audio HAL of such a tree: the board's
+        // service and its rc go aside instead, and the engine's stay.
+        fun is32BitElf(f: File) = runCatching {
+            f.inputStream().use { i -> val h = ByteArray(5); i.read(h) == 5 && h[0] == 0x7f.toByte() && h[1] == 'E'.code.toByte() && h[4] == 1.toByte() }
+        }.getOrDefault(false)
+        if (boardAudio.all { is32BitElf(it) } && File(root, "vendor/lib64/hw/android.hardware.audio@4.0-impl.so").isFile &&
+            hwPrograms("android.hardware.audio@2.0-service").any { !isLink(it) && !is32BitElf(it) }) {
+            var m = 0
+            for (f in boardAudio) {
+                for (rc in rcFilesRunning(f.name)) if (parkFile(rc)) m++
+                if (parkFile(f)) m++
+            }
+            if (m > 0) log("audio: the firmware's audio service is 32-bit and has no implementation here, the engine's 64-bit audio host serves instead ($m set aside)")
+            return
+        }
         var n = 0
         for (f in hwPrograms("android.hardware.audio@2.0-service")) {
             for (rc in rcFilesRunning(f.name)) if (parkFile(rc)) n++
             if (parkFile(f)) n++
         }
         if (n > 0) log("audio: the firmware has its own audio service, the engine's 2.0 audio host is set aside ($n)")
+    }
+
+    /**
+     * Added for AEmulator Plus (2026-11-03). The engine's 32-bit audio host dlopen()s the HAL implementation by its bare
+     * name, which a vendor program's default linker namespace finds only directly in /vendor/lib, while a board keeps it in
+     * /vendor/lib/hw: "aemu-audio-host: dlopen android.hardware.audio@2.0-impl.so: library not found", exit code 1, restarted
+     * 12 times, audioserver waits for IDevicesFactory/default for ever ("Audioserver died", media.audio_policy never
+     * registers). AudioImplLibs has the whole story; this makes the implementation reachable and lets the host whose
+     * implementation name the board has be the one that runs (both rcs define "service audio-hal-2-0", the later one wins,
+     * and that was the engine's plain one, which asks for the non-MediaTek name a MediaTek board does not have).
+     */
+    private fun fixAudioHostImplLookupOfPure32Treble() {
+        if (!kernel.treble || !isPure32Tree(root)) return
+        runCatching { AudioImplLibs.expose(root, log) }.onFailure { log("audio: HAL implementation check failed: ${it.message}") }
+        var n = 0
+        for (rc in AudioImplLibs.rcsToPark(root)) if (parkFile(rc)) n++
+        if (n > 0) log("audio: the board's implementation is ${AudioImplLibs.IMPL_MEDIATEK}, the engine's plain audio rc is set aside so the MediaTek audio host runs ($n)")
     }
 
     /**
@@ -2730,6 +3017,67 @@ class TreeFixer(
             if (parkFile(f)) n++
         }
         if (n > 0) log("media: the board's Codec2 HAL fronts hardware codecs that are not here, its service is set aside ($n); software codecs are used")
+    }
+
+    /**
+     * Added for AEmulator Plus (2026-11-01): the AIDL packages whose board service parkVendorHalsThatCannotLink() / the Codec2
+     * parking set aside. restoreFirmwareAidlDeclarations() rebuilds the board's declarations as aemu-fw-*.xml fragments after
+     * dropHalsWithoutService() took them out, which put IComponentStore/default and IUsbGadget/default back and made the
+     * framework wait for them again; these packages are not restored.
+     */
+    private fun parkedHalPackages(): Set<String> {
+        val parkedNames = File(root, "system/.aemu-parked").list().orEmpty().map { it.substringAfterLast('#') }
+        val out = HashSet<String>()
+        if (parkedNames.any { n -> C2_HAL_PREFIXES.any { n.startsWith(it) } }) out += "android.hardware.media.c2"
+        if (parkedNames.any { it.startsWith("android.hardware.usb-service.") }) {
+            out += "android.hardware.usb"; out += "android.hardware.usb.gadget"
+        }
+        return out
+    }
+
+    /**
+     * Added for AEmulator Plus (2026-11-01): vendor HAL services of a 64-bit treble image that cannot LINK, and that the
+     * framework then waits for until the watchdog kills system_server (zygote then exits with code 137).
+     *
+     * bringSwiftShaderDepsWithoutVndk() puts the engine's old HIDL stack (libhidlbase / libhwbinder / libhidltransport of
+     * aemu-vndk) into /vendor/lib64, because the passthrough graphics mapper needs it. Every other vendor HIDL library of an
+     * Android 15-17 board was built against the NEW stack and finds symbols missing in it:
+     *   vendor.qti.media.c2@1.0-service: cannot locate symbol "...return_status16onValueRetrievalEv" (libcodec2_vndk.so)
+     *   android.hardware.usb-service.qti: cannot locate symbol "...BpHwRefBase10onFirstRefEv" (android.hardware.usb.gadget@1.1.so)
+     * The services exit with code 1 and init restarts them 12 times, while their manifest entries stay: Codec2Client waits for
+     * "android.hardware.media.c2.IComponentStore/default" for ever (the boot is stuck on it), and UsbService.onUserSwitching
+     * blocks on "android.hardware.usb.gadget.IUsbGadget/default" in ActivityManager's handler until the watchdog ("Blocked in
+     * handler on ActivityManager ... for 65s", "WATCHDOG KILLING SYSTEM PROCESS").
+     *
+     * Neither service has anything to drive here (no Venus /dev/video32, no USB gadget controller; media.swcodec serves the
+     * codecs), so, as for the 32-bit boards, the service and its rc go aside and dropHalsWithoutService() takes the
+     * declarations out of the manifests. A service is set aside only when none of the three vendor stack libraries carries the
+     * symbol it needs, so an engine that keeps the board's own stack (or a board that links) keeps its services.
+     */
+    private fun parkVendorHalsThatCannotLink() {
+        if (!kernel.treble || isPure32Tree(root)) return
+        val stack = listOf("libhidlbase.so", "libhwbinder.so", "libhidltransport.so")
+            .map { File(root, "vendor/lib64/$it") }.filter { it.isFile }
+        if (stack.isEmpty()) return
+        // the symbols each library DEFINES (a plain search of the file text also hits a library that only imports the symbol:
+        // libhidlbase's own dynstr names BpHwRefBase::onFirstRef, which the vendor namespace cannot resolve all the same)
+        val defined = stack.mapNotNull { f -> runCatching { ElfPatch.dynSyms64(f)?.defined }.getOrNull() }
+        if (defined.isEmpty()) return
+        fun lacks(sym: String) = defined.none { sym in it }
+        val cases = listOf(
+            Triple("vendor.qti.media.c2@", "_ZNK7android8hardware7details13return_status16onValueRetrievalEv", "media: the board's Codec2 HAL"),
+            Triple("android.hardware.usb-service.", "_ZN7android8hardware11BpHwRefBase10onFirstRefEv", "usb: the board's USB HAL"))
+        for ((prefix, sym, what) in cases) {
+            val progs = hwPrograms(prefix)
+            if (progs.isEmpty() || !lacks(sym)) continue
+            var n = 0
+            for (f in progs) {
+                for (rc in rcFilesRunning(f.name)) if (parkFile(rc)) n++
+                if (parkFile(f)) n++
+            }
+            if (n > 0) log("$what cannot link against the HIDL stack in /vendor/lib64 (no $sym) and drives hardware that is not here, " +
+                "its service is set aside ($n)")
+        }
     }
 
     /**
@@ -2886,9 +3234,13 @@ class TreeFixer(
         // has its rc file aside too, so no rc evidence is left above; its manifest entry is still judged dead, otherwise
         // every client waits for ever ("Waited one second for android.hardware.media.c2@1.0::IComponentStore/default").
         val parkedNames = File(root, "system/.aemu-parked").list().orEmpty().map { it.substringAfterLast('#') }
-        val c2Parked = kernel.treble && isPure32Tree(root) &&
+        // (Modified 2026-11-01: not only 32-bit trees; parkVendorHalsThatCannotLink() sets the Qualcomm one aside on 64-bit ones)
+        val c2Parked = kernel.treble &&
             present.none { n -> C2_HAL_PREFIXES.any { n.startsWith(it) } } &&
             parkedNames.any { n -> C2_HAL_PREFIXES.any { n.startsWith(it) } }
+        // Added 2026-11-01: the board's USB HAL that parkVendorHalsThatCannotLink() set aside serves both of these
+        val usbParked = kernel.treble && present.none { it.startsWith("android.hardware.usb-service.") } &&
+            parkedNames.any { it.startsWith("android.hardware.usb-service.") }
         // Modified for AEmulator Plus (2026-10-31): the engine's manifest of Android 17 declares android.hardware.media.omx@1.0
         // (IOmx, IOmxStore), but this image has neither the service program nor an rc file that would start one (the engine
         // ships only libmediacodecservice.so for it). Nothing registers the HAL, and MediaCodecList (Codec2 is what serves media
@@ -2905,12 +3257,13 @@ class TreeFixer(
                 }
             }
         val moduleParked = parkedModuleHalPackages(present)
-        if (missing.isEmpty() && !c2Parked && !omxDead && moduleParked.isEmpty()) return
+        if (missing.isEmpty() && !c2Parked && !usbParked && !omxDead && moduleParked.isEmpty()) return
         // (a board's services are not all named "<package>@<version>-service": the AIDL ones are "<package>-service...",
         // "<package>.service.<vendor>" or "<package>-V1-...", and a package with such a program in the tree is not dead)
         val dead = missing.keys.filter { pkg -> pkg !in served && present.none { it.startsWith("$pkg@") || it.startsWith("$pkg-") || it.startsWith("$pkg.") } }.toSet()
         var deadAll = if (c2Parked) dead + "android.hardware.media.c2" else dead
         if (omxDead) deadAll = deadAll + omxPkg
+        if (usbParked) deadAll = deadAll + setOf("android.hardware.usb", "android.hardware.usb.gadget")
         deadAll = deadAll + moduleParked
         if (deadAll.isEmpty()) return
         val hal = Regex("[ \\t]*<hal\\b[^>]*>.*?</hal>[ \\t]*\\r?\\n?", RegexOption.DOT_MATCHES_ALL)
@@ -3855,6 +4208,35 @@ class TreeFixer(
     }
 
     /**
+     * AArch64 firmware (Android 10+): a library that asks for BTI but has a function that starts with a plain instruction
+     * (a stub, or one this tree's patches overwrote) kills the process with SIGILL at the first PLT call into it
+     * (surfaceflinger died at libsurfaceflinger.so +0x133fa8, "mov x0, #-1 ; ret"). BTI is dropped from such libraries;
+     * libsurfaceflinger.so itself is cleared unconditionally.
+     */
+    private fun btiGuard() = runCatching {
+        if (img.api < 29) return@runCatching          // no BTI in user space before Android 10
+        var n = 0
+        val dirs = listOf("system/lib64", "vendor/lib64", "system/vendor/lib64", "system/system_ext/lib64",
+            "system_ext/lib64", "product/lib64", "system/product/lib64")
+        for (d in dirs) {
+            val dir = File(root, d)
+            val files = (dir.listFiles().orEmpty().toList() + File(dir, "hw").listFiles().orEmpty().toList())
+                .filter { it.isFile && it.name.endsWith(".so") }
+            for (f in files) {
+                val force = f.name == "libsurfaceflinger.so"
+                val r = runCatching {
+                    if (ElfPatch.dropBtiIfBroken(f, force, dryRun = true) == 0) return@runCatching 0
+                    // the stock bytes are parked first, where a later delta OTA looks for them (DeltaOta.stockBytes)
+                    backupOnce(f, File(root, "system/.aemu-parked/" + f.relativeTo(root).path.replace('/', '#')))
+                    ElfPatch.dropBtiIfBroken(f, force)
+                }.getOrDefault(0)
+                if (r > 0) { n++; log("BTI: ${f.relativeTo(root).path}: landing-pad check dropped (stub without a landing pad)") }
+            }
+        }
+        if (n > 0) log("BTI: $n librar${if (n == 1) "y" else "ies"} patched")
+    }.onFailure { log("BTI: guard failed: ${it.message}") }
+
+    /**
      * KitKat (Tegra) SurfaceFlinger dereferences the NULL HAL device (hwcomposer is parked) right after
      * "Screen acquired" and dies with SIGSEGV at +0x1e77e (see [ElfPatch.skipNullDeviceHook]).
      */
@@ -4294,6 +4676,8 @@ class TreeFixer(
         }
     }
 
+    private val BPF_NOTES_STAMP = "2"      // 2: objects of vendor, odm, product and system_ext read as well
+
     /**
      * Notes for the eBPF stand-in of the kernel (Kernel64.bpfMapNotes): one file per map of the firmware eBPF objects,
      * named as the map is pinned (map_<object>_<map>), holding its type, key size and value size. They are the first
@@ -4304,10 +4688,39 @@ class TreeFixer(
     private fun bpfMapNotes() {
         if (engine != Engine.N64 || !kernel.bpfMapNotes) return
         val dir = File(root, "dev/.aemu-bpf")
-        if (dir.isDirectory) return
+        // (the stamp: an image made before the vendor objects were read has the directory already, without the maps
+        // of vendor/odm/product/system_ext - netd aborts on those; a directory without the current stamp is made again)
+        val stamp = File(dir, ".stamp")
+        if (dir.isDirectory && runCatching { stamp.readText().trim() }.getOrNull() == BPF_NOTES_STAMP) return
         val tmp = File(root, "dev/.aemu-bpf.tmp").apply { deleteRecursively(); mkdirs() }
-        val objects = (listOf(File(root, "system/etc/bpf")) + (File(root, "apex").listFiles()?.map { File(it, "etc/bpf") } ?: emptyList()))
-            .flatMap { d -> d.walkTopDown().maxDepth(3).filter { it.isFile && (it.name.endsWith(".o") || it.name.endsWith(".bpf")) }.toList() }
+        // The objects come from every partition: system and the APEXes, and the vendor ones (a vendor's own maps, e.g.
+        // Unisoc's sfp_kern: netd opens /sys/fs/bpf/map_sfp_kern_sfp_iface_pair_map and aborts on a map without a note).
+        // A partition is at the root and/or under system/ (an alias, or the real directory): each object once.
+        val rootReal = runCatching { root.canonicalFile }.getOrDefault(root)
+        val dirs = ArrayList<File>()
+        for (part in listOf("system", "vendor", "odm", "product", "system_ext")) {
+            dirs += File(root, "$part/etc/bpf")
+            if (part != "system") dirs += File(root, "system/$part/etc/bpf")
+        }
+        File(root, "apex").listFiles()?.sortedBy { it.name }?.forEach { dirs += File(it, "etc/bpf") }
+        val seen = HashSet<String>()
+        val objects = ArrayList<File>()
+        val perPart = LinkedHashMap<String, Int>()
+        for (d in dirs) {
+            if (!d.isDirectory) continue
+            val list = d.walkTopDown().maxDepth(3).filter { it.isFile && (it.name.endsWith(".o") || it.name.endsWith(".bpf")) }.sortedBy { it.path }
+            for (f in list) {
+                // canonicalFile resolves an absolute link against the phone: when it leaves the tree, the file is known by name and size
+                val real = runCatching { f.canonicalFile }.getOrDefault(f)
+                val inTree = real.path.startsWith(rootReal.path + File.separator)
+                val key = if (inTree) real.path else "${f.name}:${f.length()}"
+                if (!seen.add(key)) continue
+                objects += f
+                val rel = runCatching { f.relativeTo(root).path.removePrefix("system/") }.getOrDefault(f.path)
+                val part = rel.substringBefore('/')
+                perPart[part] = (perPart[part] ?: 0) + 1
+            }
+        }
         var n = 0
         for (o in objects) runCatching {
             val b = java.nio.ByteBuffer.wrap(o.readBytes()).order(java.nio.ByteOrder.LITTLE_ENDIAN)
@@ -4368,7 +4781,11 @@ class TreeFixer(
                 n++
             }
         }
-        if (tmp.renameTo(dir)) log("eBPF: $n map notes from ${objects.size} objects")
+        runCatching { File(tmp, ".stamp").writeText(BPF_NOTES_STAMP) }
+        dir.deleteRecursively()
+        val vendorSide = perPart.filterKeys { it != "system" && it != "apex" }
+        if (tmp.renameTo(dir)) log("eBPF: $n map notes from ${objects.size} objects (vendor ${vendorSide.values.sum()}" +
+            (if (vendorSide.isNotEmpty()) ": " + vendorSide.entries.joinToString(", ") { "${it.key} ${it.value}" } else "") + ")")
     }
 
     /**
@@ -4602,6 +5019,13 @@ class TreeFixer(
             // Samsung kernels (Behold II, Galaxy...): 0 none, 1 USB, 2 AC. Browser/VideoList.batteryCheck() read it and
             // dereference a null result when the node is missing: both apps died with an NPE on resume
             "battery/charging_source" to "0",
+            // Android 16 BatteryService (BatteryService.processValuesLocked, from onBootPhase 550) opens charge_counter and its
+            // neighbours itself; a node missing from the fake tree falls through to the host's real sysfs, where the open answers
+            // EACCES, and the FileNotFoundException ends system_server (zygote follows with 137)
+            "battery/charge_counter" to "3000000", "battery/charge_full" to "4000000", "battery/charge_full_design" to "4000000",
+            "battery/current_now" to "0", "battery/current_avg" to "0", "battery/cycle_count" to "1",
+            "battery/capacity_level" to "Full", "battery/energy_full" to "4000000", "battery/energy_now" to "4000000",
+            "battery/time_to_full_now" to "0",
         )
         for ((rel, v) in bat) File(base, rel).let { if (!it.isFile) { it.parentFile?.mkdirs(); it.writeText(v + "\n") } }
         healthdRelativeSysfs(base)
@@ -5876,6 +6300,44 @@ val db = settingsDb()
     private fun wipe(f: File) = ImageStore.wipe(f)
 
     companion object {
+        /**
+         * Modified for AEmulator Plus (2026-11-04). Programs of KeyMint services that talk to a TEE (or are declared with a
+         * secure world behind them). The old pattern allowed only "-service", "-service-qti" and "@x.y-service[.suffix]", so
+         * MediaTek's unversioned "android.hardware.security.keymint-service.tee" (Android 14-17) matched nothing: it was
+         * neither set aside nor skipped at start, aborted on every boot ("Could not initialize TeeKeymaster for KeyMint (0)")
+         * and its declarations stayed in the manifests. Any suffix after "-service" ('.tee', '.trusty', '-qti', '.nonsecure',
+         * ...) is accepted now. Used by disableTeeKeyMint() and GuestVm.startService().
+         */
+        val TEE_KEYMINT_SERVICE = Regex("^android\\.hardware\\.security\\.keymint(@[0-9.]+-service(\\..*)?|-service([.-].+)?)$")
+
+        /**
+         * Added for AEmulator Plus (2026-11-04). The firmware's own AIDL/HIDL audio services that need the board's audio
+         * hardware or declarations the engine does not make: MediaTek's android.hardware.audio.service-aidl.mediatek
+         * (registers vendor.mediatek.hardware.audio.IMtkAudio/default, refused by the service manager with -3 "VINTF
+         * declaration error", abort, exit 134 on every start) and audio_input_service (IModule/audio_input, same refusal).
+         * The engine's HIDL audio service serves audio here, so these never start. Used by GuestVm.startService().
+         */
+        val BOARD_AIDL_AUDIO_SERVICE = Regex("^(android\\.hardware\\.audio\\.service-aidl(\\..+)?|audio_input_service)$")
+
+        /**
+         * Added for AEmulator Plus (2026-11-04). The board's own power HAL programs (MediaTek mtkpower-service, its applist
+         * helper, android.hardware.power-service-mediatek) next to the engine's android.hardware.power-service.aemu. The
+         * board's one starts later and takes IPower/default over from the engine's, but fails to register IMtkPowerService
+         * (-3, VINTF declaration error) and never joins a binder thread pool (its threads: futex_wait only). PowerManagerService
+         * in system_server then calls IPower/default and waits for ever for a reply: StartPowerManager never finishes, the
+         * watchdog logs "Blocked in handler on main thread" and the boot stays at "waiting for activity". Used by GuestVm.startService().
+         */
+        val BOARD_POWER_SERVICE = Regex("^(vendor\\.mediatek\\.hardware\\.mtkpower(_applist)?-service(\\..*)?|android\\.hardware\\.power-service([.-]mediatek)?)$")
+
+        /**
+         * Added for AEmulator Plus (2026-11-04). The board's own composer programs (MediaTek composer@3.x-service, the AIDL
+         * composer3 services) next to the engine's composer@2.1 service. The engine's hwcomposer.default.so is a HWC 1.2 module
+         * (native/hwchal); MediaTek's composer@3.4 treats it as an HWC2 device, FunctionDispatcher::initFunctionPointer calls a
+         * slot of the HWC1 struct as if it were getFunction() ("fatal signal 11 ... hwcomposer.default.so, addr 0x4") and the
+         * service dies on every start. It would also fight the engine's composer for IComposer/default if it did start.
+         */
+        val BOARD_COMPOSER_SERVICE = Regex("^(android\\.hardware\\.graphics\\.composer@(2\\.[2-9]|3\\.[0-9])-service(\\..*)?|android\\.hardware\\.graphics\\.composer3-service(\\..*)?|vendor\\.qti\\.hardware\\.display\\.composer-service)$")
+
         /** True for a gralloc module that allocates from Broadcom's /dev/gememalloc (that device does not exist under the emulator). */
         fun usesGememalloc(elf: ByteArray?): Boolean =
             elf != null && String(elf, Charsets.ISO_8859_1).contains("/dev/gememalloc")

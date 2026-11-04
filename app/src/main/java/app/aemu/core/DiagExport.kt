@@ -407,6 +407,32 @@ object DiagExport {
                 ", 32-bit-only tree=${isPure32Tree(p.root)}")
         }
         appendLine()
+        // "No original dex files found" for services.jar and the other system_server jars means the precompiled code of the
+        // framework was missing or refused: which files are there, how big, since when, writable or not, and what ART
+        // keeps in dalvik-cache next to them (a boot image made there is preferred to the firmware's, and the firmware's
+        // odex files, built for the other one, are then all refused) tells which of the two it was.
+        appendLine("-- framework precompiled code (oat) and dalvik-cache --")
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        fun listOat(rel: String, only: (File) -> Boolean) {
+            val dir = File(p.root, rel)
+            val fs = dir.listFiles()?.filter(only)?.sortedBy { it.name }
+            if (fs == null) { appendLine("$rel: no such directory"); return }
+            appendLine("$rel: ${fs.size} files, directory writable=${dir.canWrite()}")
+            fs.forEach { f ->
+                appendLine("  ${f.name}: ${f.length()} bytes, ${fmt.format(java.util.Date(f.lastModified()))}, writable=${f.canWrite()}")
+            }
+        }
+        for (d in listOf("system/framework/oat/arm", "system/framework/oat/arm64", "system/framework/arm", "system/framework/arm64"))
+            if (File(p.root, d).isDirectory) listOat(d) { it.isFile && (it.name.startsWith("boot") || it.name.startsWith("services") ||
+                it.name.startsWith("wifi-service") || it.name.startsWith("ethernet-service") || it.name.startsWith("com.android.location.provider")) }
+        for (isa in listOf("arm", "arm64"))
+            if (File(p.root, "data/dalvik-cache/$isa").isDirectory) listOat("data/dalvik-cache/$isa") { it.name.startsWith("system@framework@") }
+        for (jar in listOf("services.jar", "wifi-service.jar", "ethernet-service.jar", "com.android.location.provider.jar")) {
+            val f = File(p.root, "system/framework/$jar")
+            val hasDex = runCatching { java.util.zip.ZipFile(f).use { z -> z.getEntry("classes.dex") != null } }.getOrNull()
+            appendLine("system/framework/$jar: " + (if (f.isFile) "${f.length()} bytes, classes.dex inside=$hasDex" else "missing"))
+        }
+        appendLine()
         appendLine("-- GL drivers (where SwiftShader and the bridge are in the guest tree) --")
         for (d in listOf("vendor/lib64/egl", "system/lib64/egl", "system/vendor/lib64/egl", "vendor/lib/egl", "system/lib/egl")) {
             val dir = File(p.root, d)
@@ -587,6 +613,22 @@ object DiagExport {
         for (d in listOf("vendor/lib/hw", "vendor/lib64/hw", "system/lib/hw", "system/lib64/hw", "system/vendor/lib/hw")) {
             File(root, d).listFiles()?.filter { f -> val n = f.name; n.contains("keymaster") || n.contains("keystore") || n.contains("gatekeeper") || n.contains("camera") }
                 ?.sortedBy { it.name }?.forEach { appendLine("  $d/${it.name} (${it.length()} bytes)") }
+        }
+        // the audio HAL host dlopen()s its implementation by bare name: which of them the tree has, and whether the vendor
+        // namespace (/vendor/lib, /odm/lib) reaches it directly
+        appendLine("audio HAL implementations (the engine's host asks for these by bare name):")
+        for (name in AudioImplLibs.HOST_IMPLS) {
+            val reach = AudioImplLibs.reachable(root, name)
+            val hw = listOf("vendor/lib/hw", "odm/lib/hw", "system/vendor/lib/hw", "system/vendor/lib").map { File(root, "$it/$name") }.filter { it.isFile }
+            appendLine("  $name: " + when {
+                reach != null -> "reachable (${reach.relativeTo(root).path}, ${reach.length()} bytes)"
+                hw.isNotEmpty() -> "NOT reachable by bare name, only in ${hw.joinToString { it.relativeTo(root).path }}"
+                else -> "not in the tree"
+            })
+        }
+        for (d in listOf("vendor/lib/hw", "system/vendor/lib/hw", "system/lib/hw")) {
+            File(root, d).listFiles()?.filter { it.name.contains("audio") }?.sortedBy { it.name }
+                ?.forEach { appendLine("  $d/${it.name} (${it.length()} bytes)") }
         }
     }
 }

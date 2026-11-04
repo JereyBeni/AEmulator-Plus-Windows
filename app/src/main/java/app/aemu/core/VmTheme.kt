@@ -1,4 +1,4 @@
-/* AEmulator Super Plus, 2026-10-12: VM screen themes; 2026-10-13: device skins (merged from Super Plus). GPL-3.0; see LICENSE and NOTICE.md. */
+/* AEmulator Super Plus, 2026-10-12: VM screen themes; 2026-10-13: device skins (merged from Super Plus); 2026-11-02: three theme lists, bundled skin pack. GPL-3.0; see LICENSE and NOTICE.md. */
 package app.aemu.core
 
 import app.aemu.R
@@ -12,6 +12,9 @@ import java.util.UUID
 
 /** Shapes of the navigation keys: the app's own sets and one per Android era. */
 enum class GlyphSet { MATERIAL, SUNSET, GINGERBREAD, HONEYCOMB, HOLO, LOLLIPOP }
+
+/** The three lists of the theme picker: the app's plain looks, the device skins that come with it, and the person's own themes. */
+enum class ThemeGroup { PLAIN, SKIN, CUSTOM }
 
 /**
  * Look of the VM screen around the guest: the navigation bar (key shapes, colours, press feedback, size) and the
@@ -46,8 +49,17 @@ data class VmTheme(
     /** the skin's own hardware keys; with any, the on-screen bar is hidden while the skin is shown */
     val skinKeys: List<SkinKey> = emptyList(),
     val builtIn: Boolean = false,
+    /** one of the device skins bundled with the app: [frameImage] is then an asset of the APK, not a file in [VmThemes.dir] */
+    val fromSkinPack: Boolean = false,
 ) {
     val isSkin get() = frameImage != null && skinScreen != null
+
+    /** The picker list the theme is in. Only [ThemeGroup.CUSTOM] themes can be edited, deleted or added to. */
+    val group get() = when {
+        !builtIn -> ThemeGroup.CUSTOM
+        fromSkinPack -> ThemeGroup.SKIN
+        else -> ThemeGroup.PLAIN
+    }
 
     fun toJson(): JSONObject = JSONObject().put("id", id).put("name", name).put("glyphs", glyphs.name)
         .put("barColor", barColor ?: JSONObject.NULL).put("iconColor", iconColor ?: JSONObject.NULL)
@@ -89,8 +101,10 @@ object VmThemes {
     private const val FILE = "themes.json"
     const val EXTENSION = "aetheme"
     private const val FORMAT = "aemu-theme"
+    private const val SKIN_ASSETS = "skins"
+    private const val SKIN_CACHE = "skin-pack"
 
-    /** Themes that come with the app, one per Android era plus the app's two own looks. */
+    /** The plain themes: one per Android era plus the app's two own looks. Fixed, nothing can be added to this list. */
     val BUILT_IN = listOf(
         VmTheme("original", "Original", GlyphSet.MATERIAL, barColor = null, iconColor = null, pressColor = 0x2EFFFFFF, roundedBar = true, builtIn = true),
         VmTheme("sunset", "Sunset", GlyphSet.SUNSET, builtIn = true),
@@ -120,7 +134,18 @@ object VmThemes {
         List(a.length()) { VmTheme.fromJson(a.getJSONObject(it)) }
     }.getOrDefault(emptyList())
 
-    fun all(ctx: Context) = BUILT_IN + custom(ctx)
+    @Volatile private var skinCache: List<VmTheme>? = null
+
+    /**
+     * The device skins that come with the app (by @regectt), read from assets/skins/skins.json. Fixed like [BUILT_IN]:
+     * to change one, duplicate it into the custom themes.
+     */
+    fun skins(ctx: Context): List<VmTheme> = skinCache ?: runCatching {
+        val a = JSONArray(ctx.assets.open("$SKIN_ASSETS/skins.json").bufferedReader(Charsets.UTF_8).use { it.readText() })
+        List(a.length()) { VmTheme.fromJson(a.getJSONObject(it)).copy(builtIn = true, fromSkinPack = true) }
+    }.getOrDefault(emptyList()).also { if (it.isNotEmpty()) skinCache = it }
+
+    fun all(ctx: Context) = BUILT_IN + skins(ctx) + custom(ctx)
 
     /**
      * The choice lives in its own file: the VM runs in another process (read on resume, like host-ui.json), and the
@@ -152,9 +177,24 @@ object VmThemes {
         } catch (e: Exception) { f.failWrite(out); throw e }
     }
 
-    /** Adds or replaces a custom theme (built-ins are never overwritten: edit a copy). */
+    /**
+     * A custom copy of [t] under a new id, for "duplicate" and "new theme". The copy gets its own file of the picture, so
+     * deleting one theme never takes the picture of another; that is also how a skin of the pack (whose picture is an
+     * asset) becomes an editable theme.
+     */
+    fun detach(ctx: Context, t: VmTheme, name: String = t.name): VmTheme {
+        val picture = imageFile(ctx, t)?.let { f -> runCatching { importImage(ctx, f.readBytes()) }.getOrNull() }
+        val lost = t.frameImage != null && picture == null
+        return t.copy(id = UUID.randomUUID().toString(), name = name, builtIn = false, fromSkinPack = false, frameImage = picture,
+            skinScreen = if (lost) null else t.skinScreen, skinKeys = if (lost) emptyList() else t.skinKeys)
+    }
+
+    /**
+     * Adds or replaces a custom theme. The plain themes and the skin pack are never overwritten and never grow: whatever
+     * is saved from them becomes a new custom theme.
+     */
     fun save(ctx: Context, t: VmTheme): VmTheme {
-        val theme = if (t.builtIn || BUILT_IN.any { it.id == t.id }) t.copy(id = UUID.randomUUID().toString(), builtIn = false) else t
+        val theme = if (t.builtIn || BUILT_IN.any { it.id == t.id } || skins(ctx).any { it.id == t.id }) detach(ctx, t) else t
         val list = custom(ctx).filter { it.id != theme.id } + theme.copy(name = VmTheme.cleanName(theme.name).ifBlank { "Theme" })
         write(ctx, list)
         // pictures no theme uses any more
@@ -179,7 +219,31 @@ object VmThemes {
         return name
     }
 
-    fun imageFile(ctx: Context, t: VmTheme): File? = t.frameImage?.let { File(dir(ctx), it) }?.takeIf { it.isFile }
+    fun imageFile(ctx: Context, t: VmTheme): File? {
+        val name = t.frameImage ?: return null
+        if (t.fromSkinPack) return skinPicture(ctx, name)
+        return File(dir(ctx), name).takeIf { it.isFile }
+    }
+
+    /** A picture of the skin pack, copied out of the assets once (and again if its size differs after an update) so it reads like any file. */
+    private fun skinPicture(ctx: Context, name: String): File? {
+        if (!VmTheme.safeFileName(name)) return null
+        val asset = "$SKIN_ASSETS/$name"
+        return runCatching {
+            val size = ctx.assets.open(asset).use { it.available().toLong() }
+            val folder = File(dir(ctx), SKIN_CACHE).apply { mkdirs() }
+            val dest = File(folder, name)
+            if (!(dest.isFile && dest.length() == size)) {
+                // the VM and the settings screen are two processes: write aside, then move into place
+                val tmp = File(folder, "$name.${android.os.Process.myPid()}.tmp")
+                try {
+                    ctx.assets.open(asset).use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    tmp.renameTo(dest)
+                } finally { tmp.delete() }
+            }
+            dest.takeIf { it.isFile }
+        }.getOrNull()
+    }
 
     /** A shareable .aetheme file: the theme as JSON, its frame picture embedded. */
     fun export(ctx: Context, t: VmTheme): ByteArray {

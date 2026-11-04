@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">客體 RAM</string>
     <string name="vs_ram_auto">自動</string>
+    <string name="vs_ram_host">主機 / 最大</string>
+    <string name="vs_ram_custom">自訂</string>
+    <string name="vs_ram_custom_hint">容量</string>
     <string name="vs_network">回報的網路</string>
     <string name="vs_network_sub">狀態列顯示的內容：2G 到 LTE。預設為 2G，因為並非每個韌體都能處理 3G 或更新的網路</string>
     <string name="m_network">網路</string>

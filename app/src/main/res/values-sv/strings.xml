@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM för gästen</string>
     <string name="vs_ram_auto">Automatiskt</string>
+    <string name="vs_ram_host">Värd / max</string>
+    <string name="vs_ram_custom">Anpassad</string>
+    <string name="vs_ram_custom_hint">Mängd</string>
     <string name="vs_network">Rapporterat nätverk</string>
     <string name="vs_network_sub">Vad statusfältet visar: 2G till LTE. Standard är 2G, eftersom inte all firmware klarar 3G eller nyare</string>
     <string name="m_network">Nätverk</string>

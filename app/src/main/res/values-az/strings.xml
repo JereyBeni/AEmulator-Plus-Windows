@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Qonağın RAM-ı</string>
     <string name="vs_ram_auto">Avtomatik</string>
+    <string name="vs_ram_host">Host / maksimum</string>
+    <string name="vs_ram_custom">Fərdi</string>
+    <string name="vs_ram_custom_hint">Miqdar</string>
     <string name="vs_network">Bildirilən şəbəkə</string>
     <string name="vs_network_sub">Status çubuğunun göstərdiyi: 2G-dən LTE-yə qədər. Defolt 2G-dir, çünki hər mikroproqram 3G və ya daha yenisini dəstəkləmir</string>
     <string name="m_network">Şəbəkə</string>

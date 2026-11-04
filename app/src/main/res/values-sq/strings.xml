@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM-i i mysafirit</string>
     <string name="vs_ram_auto">Automatik</string>
+    <string name="vs_ram_host">Host / maks.</string>
+    <string name="vs_ram_custom">Personalizuar</string>
+    <string name="vs_ram_custom_hint">Sasia</string>
     <string name="vs_network">Rrjeti i raportuar</string>
     <string name="vs_network_sub">Çfarë shfaq shiriti i statusit: nga 2G në LTE. Parazgjedhja 2G, pasi jo çdo firmware e përballon 3G-në ose më të re</string>
     <string name="m_network">Rrjeti</string>

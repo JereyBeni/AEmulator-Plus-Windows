@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM invitat</string>
     <string name="vs_ram_auto">Automat</string>
+    <string name="vs_ram_host">Gazdă / max.</string>
+    <string name="vs_ram_custom">Personalizat</string>
+    <string name="vs_ram_custom_hint">Cantitate</string>
     <string name="vs_network">Rețea raportată</string>
     <string name="vs_network_sub">Ce afișează bara de stare: de la 2G la LTE. Implicit 2G, deoarece nu orice firmware gestionează 3G sau mai nou</string>
     <string name="m_network">Rețea</string>

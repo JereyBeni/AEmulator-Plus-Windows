@@ -414,7 +414,12 @@ enum class Kernel64(
         sysFiles = mapOf("android_lcd/lcd_name" to "aemu\n"),
         ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, oneFingerprint = true, vendorHeapProps = true,
         firmwareOwn = listOf("vendor#bin#hw#android.hardware.media.omx@1.0-service", "vendor#etc#init#android.hardware.media.omx@1.0-service.rc",
-            "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so"),
+            "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so",
+            // Added for AEmulator Plus (2026-11-02): the empty libhidltransport and libhwbinder of 10+. A stock vendor side built for
+            // 9 - 11 names them as dependencies of its HAL programs and libraries, and over the system of 12 / 13 they live only inside
+            // the VNDK package, where the vendor namespace does not look ("library libhidltransport.so not found: needed by main
+            // executable": fingerprint, gatekeeper, keymaster, light... exit code 1, restarted 12 times). As on 14+.
+            "vendor#lib64#libhidltransport.so", "vendor#lib64#libhwbinder.so", "vendor#lib#libhidltransport.so", "vendor#lib#libhwbinder.so"),
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 13: a copy of the kernel of 12 (its own from here on)
     A13("33", 33..33, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
@@ -433,7 +438,12 @@ enum class Kernel64(
         sysFiles = mapOf("android_lcd/lcd_name" to "aemu\n"),
         ownVndkDir = "vendor/lib64/aemu-vndk", manifestFragmentsAside = true, trebleLinkerConfig = true, propAreaSize = 512 * 1024, cgroup2Root = true, partitionsAtRoot = true, bpfMapNotes = true, oneFingerprint = true, vendorHeapProps = true,
         firmwareOwn = listOf("vendor#bin#hw#android.hardware.media.omx@1.0-service", "vendor#etc#init#android.hardware.media.omx@1.0-service.rc",
-            "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so"),
+            "vendor#lib#libavservices_minijail_vendor.so", "vendor#lib#libmediacodecservice.so", "vendor#lib#libminijail_vendor.so",
+            // Added for AEmulator Plus (2026-11-02): the empty libhidltransport and libhwbinder of 10+. A stock vendor side built for
+            // 9 - 11 names them as dependencies of its HAL programs and libraries, and over the system of 12 / 13 they live only inside
+            // the VNDK package, where the vendor namespace does not look ("library libhidltransport.so not found: needed by main
+            // executable": fingerprint, gatekeeper, keymaster, light... exit code 1, restarted 12 times). As on 14+.
+            "vendor#lib64#libhidltransport.so", "vendor#lib64#libhwbinder.so", "vendor#lib#libhidltransport.so", "vendor#lib#libhwbinder.so"),
         firmwareAside = listOf("vendor#lib64#hw#android.hardware.keymaster@3.0-impl-qti.so", "vendor#lib64#hw#android.hardware.gatekeeper@1.0-impl-qti.so")),
     // Android 14: a copy of the kernel of 13 (its own from here on)
     A14("34", 34..34, volumeAtUserStart = true, derivedIdentity = true, oneIncludePolicy = true, webViewSingleProcess = true, registeredNetwork = true, treble = true, eglDir = "vendor/lib64/egl", gles = "2",
@@ -623,6 +633,13 @@ enum class Kernel64(
     val runner: String get() = "libaemu64_$tag.so"
     val binderd: String get() = "libbinderd64_$tag.so"
     /** the engine's libEGL implementation, under the image root */
+    /**
+     * Added for AEmulator Plus (2026-11-02): where the 32-bit side of this release keeps its EGL drivers (the engine puts the
+     * 32-bit SwiftShader of a 32-bit-only firmware next to the 64-bit one: /vendor/lib/egl on a Treble release) and where the
+     * 32-bit libEGL looks for the "emulation" driver. The GPU bridge of a 32-bit-only firmware stands in these.
+     */
+    val eglDir32: String get() = eglDir.replace("/lib64/", "/lib/")
+    val emulationDir32: String get() = (emulationDir ?: eglDir).replace("/lib64/", "/lib/")
     val eglLib: String get() = "$eglDir/libEGL_swiftshader.so"
     /** every guest file some kernel ships, under its asset name */
     fun isOwnSuffix(name: String) = name.endsWith("_swiftshader.so") || name.endsWith("_$eglName.so") || name == "libGLES_aemu.so" ||

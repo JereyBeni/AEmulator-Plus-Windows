@@ -1,5 +1,6 @@
 /* Modified for AEmulator Sunset through 2026-10-02: catalog, experimental
- * unlock, active-guest Open and temporary long-press LPM boot. GPL-3.0; see NOTICE.md. */
+ * unlock, active-guest Open and temporary long-press LPM boot.
+ * Modified for AEmulator Plus, 2026-11-01: press-and-hold reordering and folders in the library. GPL-3.0; see NOTICE.md. */
 package app.aemu.ui
 
 import app.aemu.core.userMessageOrNull
@@ -35,6 +36,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -111,6 +113,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.List
 import android.content.Context
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 
 const val ACTION_BOOT = "app.aemu.BOOT"
 
@@ -211,6 +221,27 @@ fun Library(model: LibraryModel) {
     }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
+    // the user's arrangement of the library (order + folders), used by the classic list and the grid; 3D ignores it
+    val arranger = remember { LibraryArranger(ctx) }
+    arranger.images = images
+    arranger.systemsFirst = !newHome
+    val drag = remember { LibraryDragState() }
+    val dragKey = drag.key
+    val rows = arranger.rows(collapse = if (dragKey != null && arranger.layout().isFolder(dragKey)) dragKey else null)
+    val haptic = LocalHapticFeedback.current
+    val folderEdge = MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+    var moveFor by remember { mutableStateOf<GuestImage?>(null) }
+    var newFolderOpen by remember { mutableStateOf(false) }
+    var newFolderRom by remember { mutableStateOf<String?>(null) }
+    var renameFolderId by remember { mutableStateOf<String?>(null) }
+    fun openNewFolder(rom: String? = null) { newFolderRom = rom; newFolderOpen = true }
+    fun toggleFolder(id: String) {
+        val l = arranger.layout()
+        val f = l.folders[id] ?: return
+        arranger.update(l.setOpen(id, !f.open)); arranger.commit()
+    }
+    fun deleteFolder(id: String) { arranger.update(arranger.layout().deleteFolder(id)); arranger.commit() }
+
     val scope = rememberCoroutineScope()
     var updateState by remember { mutableStateOf<UpdateState>(UpdateState.Idle) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
@@ -263,7 +294,7 @@ fun Library(model: LibraryModel) {
         },
         floatingActionButton = {
             if (newHome) HomeFab(expanded = addMenu, onToggle = { addMenu = it },
-                onImport = { pick.launch(arrayOf("*/*")) }, onLibrary = { library = true })
+                onImport = { pick.launch(arrayOf("*/*")) }, onLibrary = { library = true }, onNewFolder = { openNewFolder() })
             else ExtendedFloatingActionButton(
                 onClick = { if (images.isEmpty()) pick.launch(arrayOf("*/*")) else addMenu = true },
                 icon = { Icon(Icons.Rounded.Add, null) },
@@ -275,9 +306,14 @@ fun Library(model: LibraryModel) {
         if (newHome) {
             val full: androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope.() -> androidx.compose.foundation.lazy.grid.GridItemSpan =
                 { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }
+            val gridState = rememberLazyGridState()
+            val controller = remember(gridState, arranger, drag) { LibraryDragController(drag, gridState.dragHost(), arranger) }
+            LibraryDragAutoScroll(controller)
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                state = gridState,
                 columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(148.dp),
-                modifier = Modifier.fillMaxSize().padding(pad),
+                modifier = Modifier.fillMaxSize().padding(pad)
+                    .libraryDragGesture(controller) { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 120.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -289,19 +325,36 @@ fun Library(model: LibraryModel) {
                     }
                 }
                 if (images.isEmpty() && !imp.active) item(span = full) { EmptyState(onHelp = { help = true }) }
-                items(images.size, key = { images[it].id }) { i ->
-                    val img = images[i]
-                    MachineCard(
-                        img,
-                        baseName = images.firstOrNull { it.id == img.baseId }?.name,
-                        modifier = Modifier.animateItem(),
-                        onStart = { VmActivity.start(ctx, img.id) },
-                        onSettings = { settingsFor = img },
-                        onRename = { renameFor = img },
-                        onNewMachine = { containerFrom = img },
-                        onReset = { resetFor = img },
-                        onDelete = { deleteFor = img },
-                    )
+                items(rows.size, key = { rows[it].key },
+                    span = { i -> if (rows[i] is FolderRow) GridItemSpan(maxLineSpan) else GridItemSpan(1) }) { i ->
+                    when (val row = rows[i]) {
+                        is FolderRow -> FolderHeader(
+                            row.folder,
+                            hovered = drag.hoverFolder == row.id,
+                            modifier = (if (drag.key == row.id) Modifier else Modifier.animateItem())
+                                .libraryDragVisual(controller, row.id, lockX = false),
+                            onToggle = { toggleFolder(row.id) },
+                            onRename = { renameFolderId = row.id },
+                            onDelete = { deleteFolder(row.id) },
+                        )
+                        is RomRow -> {
+                            val img = row.img
+                            MachineCard(
+                                img,
+                                baseName = images.firstOrNull { it.id == img.baseId }?.name,
+                                modifier = (if (drag.key == img.id) Modifier else Modifier.animateItem())
+                                    .libraryDragVisual(controller, img.id, lockX = false)
+                                    .then(if (row.folderId != null) Modifier.border(2.dp, folderEdge, MaterialTheme.shapes.extraLarge) else Modifier),
+                                onStart = { VmActivity.start(ctx, img.id) },
+                                onSettings = { settingsFor = img },
+                                onRename = { renameFor = img },
+                                onNewMachine = { containerFrom = img },
+                                onReset = { resetFor = img },
+                                onDelete = { deleteFor = img },
+                                onMoveToFolder = { moveFor = img },
+                            )
+                        }
+                    }
                 }
             }
         } else {
@@ -328,40 +381,72 @@ fun Library(model: LibraryModel) {
                         onRename = { renameFor = it },
                         onDelete = { deleteFor = it },
                     )
-                } else LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
-                ) {
-                    item { StorageAccessCard() }
-                    item { if (!imp.active) FirmwareFolderCard(onImport = { f -> model.import(android.net.Uri.fromFile(f)) }) }
-                    item {
-                        AnimatedVisibility(imp.active || imp.error != null || imp.done != null) {
-                            Box(Modifier.padding(bottom = 12.dp)) {
-                                ImportCard(imp, onCancel = model::cancelImport, onDismiss = model::dismissImport)
+                } else {
+                    val listState = rememberLazyListState()
+                    // a press-and-hold on a card's bottom row (Start, settings…) stays the card's own: low-power start
+                    val keepForCard = with(LocalDensity.current) { 88.dp.toPx() }
+                    val controller = remember(listState, arranger, drag, keepForCard) {
+                        LibraryDragController(drag, listState.dragHost(), arranger, keepForCard)
+                    }
+                    LibraryDragAutoScroll(controller)
+                    // Modified for AEmulator Plus (2026-11-04): the list could be pulled down past its first row, away from
+                    // the top bar, and the stretch of the platform overscroll left a black screen behind it. No overscroll
+                    // effect here, and the list is clipped to its own area; the top bar still collapses and expands with it.
+                    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.LocalOverscrollFactory provides null) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().clipToBounds()
+                            .libraryDragGesture(controller) { haptic.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+                    ) {
+                        item { StorageAccessCard() }
+                        item { if (!imp.active) FirmwareFolderCard(onImport = { f -> model.import(android.net.Uri.fromFile(f)) }) }
+                        item {
+                            AnimatedVisibility(imp.active || imp.error != null || imp.done != null) {
+                                Box(Modifier.padding(bottom = 12.dp)) {
+                                    ImportCard(imp, onCancel = model::cancelImport, onDismiss = model::dismissImport)
+                                }
+                            }
+                        }
+                        // one list in the user's order; folders are headers with their ROMs right below them
+                        items(rows, key = { it.key }) { row ->
+                            when (row) {
+                                is FolderRow -> Box(
+                                    (if (drag.key == row.id) Modifier else Modifier.animateItem())
+                                        .libraryDragVisual(controller, row.id, lockX = true)
+                                        .padding(bottom = 12.dp),
+                                ) {
+                                    FolderHeader(
+                                        row.folder,
+                                        hovered = drag.hoverFolder == row.id,
+                                        onToggle = { toggleFolder(row.id) },
+                                        onRename = { renameFolderId = row.id },
+                                        onDelete = { deleteFolder(row.id) },
+                                    )
+                                }
+                                is RomRow -> {
+                                    val img = row.img
+                                    Box(
+                                        (if (drag.key == img.id) Modifier else Modifier.animateItem())
+                                            .libraryDragVisual(controller, img.id, lockX = true)
+                                            .padding(start = if (row.folderId != null) 20.dp else 0.dp, bottom = 12.dp),
+                                    ) {
+                                        ImageCard(
+                                            img,
+                                            onStart = { VmActivity.start(ctx, img.id) },
+                                            onSettings = { settingsFor = img },
+                                            onRename = { renameFor = img },
+                                            onDelete = { deleteFor = img },
+                                            onMoveToFolder = { moveFor = img },
+                                            baseName = images.firstOrNull { it.id == img.baseId }?.name,
+                                            active = activeVmId == img.id,
+                                            modifier = if (row.folderId != null) Modifier.border(2.dp, folderEdge, MaterialTheme.shapes.large) else Modifier,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-                    // two sections: imported firmwares ("systems") and the containers made from them
-                    val systems = images.filter { it.baseId.isEmpty() }
-                    val containers = images.filter { it.baseId.isNotEmpty() }
-                    for ((title, list) in listOf(R.string.section_systems to systems, R.string.section_containers to containers)) {
-                        if (list.isEmpty()) continue
-                        item(key = "h$title") {
-                            Text(stringResource(title), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 12.dp))
-                        }
-                        items(list, key = { it.id }) { img ->
-                            Box(Modifier.padding(bottom = 12.dp)) {
-                            ImageCard(
-                                img,
-                                onStart = { VmActivity.start(ctx, img.id) },
-                                onSettings = { settingsFor = img },
-                                onRename = { renameFor = img },
-                                onDelete = { deleteFor = img },
-                                baseName = images.firstOrNull { it.id == img.baseId }?.name,
-                                active = activeVmId == img.id,
-                            )
-                            }
-                        }
                     }
                 }
             }
@@ -369,7 +454,7 @@ fun Library(model: LibraryModel) {
     }
 
     settingsFor?.let { img ->
-        SettingsSheet(img, onDismiss = { settingsFor = null }, onSave = { s -> model.updateSettings(img, s); settingsFor = null })
+        SettingsSheet(img, onDismiss = { settingsFor = null }, onSave = { s, name -> model.updateSettings(img, s, name); settingsFor = null })
     }
     resetFor?.let { img ->
         AlertDialog(
@@ -406,10 +491,32 @@ fun Library(model: LibraryModel) {
             dismissButton = { TextButton(onClick = { renameFor = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    if (newFolderOpen) FolderNameDialog(R.string.folder_new, "", onDismiss = { newFolderOpen = false; newFolderRom = null },
+        onConfirm = { name ->
+            arranger.update(arranger.layout().createFolder(LibLayout.newFolderId(), name, newFolderRom)); arranger.commit()
+            newFolderOpen = false; newFolderRom = null
+        })
+    renameFolderId?.let { id ->
+        arranger.layout().folders[id]?.let { f ->
+            FolderNameDialog(R.string.folder_rename, f.name, onDismiss = { renameFolderId = null },
+                onConfirm = { name -> arranger.update(arranger.layout().renameFolder(id, name)); arranger.commit(); renameFolderId = null })
+        }
+    }
+    moveFor?.let { img ->
+        MoveToFolderDialog(img, arranger.layout(), onDismiss = { moveFor = null },
+            onPick = { folder ->
+                val l = arranger.layout()
+                // a folder you move something into opens, so the ROM does not seem to vanish
+                arranger.update(if (folder == null) l.takeOut(img.id) else l.setOpen(folder, true).moveRomToFolder(img.id, folder))
+                arranger.commit(); moveFor = null
+            },
+            onNew = { openNewFolder(img.id); moveFor = null })
+    }
     if (help) HelpDialog(onDismiss = { help = false })
     if (!newHome && addMenu) AddSheet(images, onDismiss = { addMenu = false },
         onImport = { addMenu = false; pick.launch(arrayOf("*/*")) },
-        onContainer = { addMenu = false; containerFrom = it })
+        onContainer = { addMenu = false; containerFrom = it },
+        onNewFolder = if (view3d) null else ({ addMenu = false; openNewFolder() }))
     if (newHome && library) LibrarySheet(images.filter { it.baseId.isEmpty() }, onDismiss = { library = false },
         onImportFile = { library = false; pick.launch(arrayOf("*/*")) },
         onImportFolder = { f -> library = false; model.import(android.net.Uri.fromFile(f)) },
@@ -433,9 +540,25 @@ fun Library(model: LibraryModel) {
 /** The classic "+" menu: a firmware file, or a new container of a firmware already here. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddSheet(images: List<GuestImage>, onDismiss: () -> Unit, onImport: () -> Unit, onContainer: (GuestImage) -> Unit) {
+private fun AddSheet(images: List<GuestImage>, onDismiss: () -> Unit, onImport: () -> Unit, onContainer: (GuestImage) -> Unit, onNewFolder: (() -> Unit)? = null) {
+    // Modified for AEmulator Plus (2026-11-04): "New container" always took images.first(), so a container of any
+    // other VM could not be made from this menu. With more than one VM the menu now asks which one to copy.
+    var choosing by remember { mutableStateOf(false) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (choosing) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.add_container), style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(start = 16.dp, bottom = 4.dp))
+                // firmwares first, then the containers made from them
+                for (img in images.filter { it.baseId.isEmpty() } + images.filter { it.baseId.isNotEmpty() }) {
+                    ListItem(headlineContent = { Text(img.name) },
+                        supportingContent = { Text("${img.displayVersion} · ${img.skin}") },
+                        leadingContent = { Icon(Icons.Rounded.ContentCopy, null) },
+                        modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { onContainer(img) })
+                }
+            }
+        } else Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ListItem(headlineContent = { Text(stringResource(R.string.add_import)) },
                 supportingContent = { Text(stringResource(R.string.add_import_sub)) },
                 leadingContent = { Icon(Icons.Rounded.FileOpen, null) },
@@ -443,7 +566,12 @@ private fun AddSheet(images: List<GuestImage>, onDismiss: () -> Unit, onImport: 
             ListItem(headlineContent = { Text(stringResource(R.string.add_container)) },
                 supportingContent = { Text(stringResource(R.string.add_container_sub)) },
                 leadingContent = { Icon(Icons.Rounded.ContentCopy, null) },
-                modifier = Modifier.clip(MaterialTheme.shapes.large).clickable { images.firstOrNull()?.let(onContainer) })
+                modifier = Modifier.clip(MaterialTheme.shapes.large).clickable {
+                    if (images.size <= 1) images.firstOrNull()?.let(onContainer) else choosing = true
+                })
+            if (onNewFolder != null) ListItem(headlineContent = { Text(stringResource(R.string.folder_new)) },
+                leadingContent = { Icon(Icons.Rounded.FolderOpen, null) },
+                modifier = Modifier.clip(MaterialTheme.shapes.large).clickable(onClick = onNewFolder))
         }
     }
 }
@@ -455,7 +583,7 @@ private fun ContainerDialog(
     onDismiss: () -> Unit,
     onCreate: (GuestImage, String, Boolean, app.aemu.core.VmSettings) -> Unit
 ) {
-    var from by remember { mutableStateOf(src) }
+    var from by remember(src.id) { mutableStateOf(src) }
     var name by remember(from) { mutableStateOf("${from.name} (${images.count { it.baseId == from.id || it.baseId == from.baseId.ifEmpty { "-" } } + 2})") }
     var copy by remember { mutableStateOf(false) }
     var preset by remember { mutableStateOf(1) } // 0: Perf, 1: Balanced, 2: Lite
@@ -682,10 +810,10 @@ private fun ImportCard(s: ImportState, onCancel: () -> Unit, onDismiss: () -> Un
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun ImageCard(img: GuestImage, onStart: () -> Unit, onSettings: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, baseName: String? = null, active: Boolean = false) {
+private fun ImageCard(img: GuestImage, onStart: () -> Unit, onSettings: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit, onMoveToFolder: () -> Unit, baseName: String? = null, active: Boolean = false, modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val lowPowerLabel = stringResource(R.string.lpm_start)
-    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+    Card(modifier = modifier, shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(52.dp)) {
@@ -729,6 +857,7 @@ private fun ImageCard(img: GuestImage, onStart: () -> Unit, onSettings: () -> Un
                 Spacer(Modifier.weight(1f))
                 FilledTonalIconButton(onClick = onSettings) { Icon(Icons.Rounded.Tune, stringResource(R.string.settings)) }
                 FilledTonalIconButton(onClick = onRename) { Icon(Icons.Rounded.Edit, stringResource(R.string.rename)) }
+                FilledTonalIconButton(onClick = onMoveToFolder) { Icon(Icons.Rounded.FolderOpen, stringResource(R.string.folder_move)) }
                 FilledTonalIconButton(onClick = onDelete) { Icon(Icons.Rounded.Delete, stringResource(R.string.delete)) }
             }
         }

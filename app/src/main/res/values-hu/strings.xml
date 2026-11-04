@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Vendég RAM</string>
     <string name="vs_ram_auto">Automatikus</string>
+    <string name="vs_ram_host">Gazda / max.</string>
+    <string name="vs_ram_custom">Egyéni</string>
+    <string name="vs_ram_custom_hint">Mennyiség</string>
     <string name="vs_network">Jelzett hálózat</string>
     <string name="vs_network_sub">Amit az állapotsor mutat: 2G-től LTE-ig. Alapértelmezés 2G, mivel nem minden firmware kezeli a 3G-t vagy újabbat</string>
     <string name="m_network">Hálózat</string>

@@ -996,4 +996,103 @@ object ElfPatch {
         RandomAccessFile(f, "rw").use { raf -> raf.seek(at.toLong()); raf.write(THUMB_NOP2) }
         return 1
     }
+
+    /**
+     * AArch64 BTI (branch target identification). A 64-bit library whose GNU property note asks for BTI is mapped PROT_BTI by
+     * bionic's linker, and the host kernel then raises SIGILL (ILL_ILLOPC, PSTATE.BTYPE=01, i.e. "pst ...1400" in the crash
+     * report) for an indirect branch (PLT: br x17) that lands on code with no landing pad. Some firmware libraries claim BTI
+     * while their exported functions are hand-written / stubbed and start with a plain instruction (libntf.so: GetNtFeature is
+     * "mov x0, #0 ; ret"): surfaceflinger and audioserver die at the first call into them.
+     *
+     * Clears the BTI bit of AARCH64_FEATURE_1_AND in such a library (only when some exported function really lacks a landing
+     * pad; a correct BTI library is left alone). With [force] the bit is cleared whatever the exports look like: the stub
+     * can be a function the dynamic symbol table does not list (libsurfaceflinger.so: a "mov x0, #-1 ; ret" target of its
+     * own PLT, SIGILL at the first call). Returns 1 when the file was changed.
+     */
+    fun dropBtiIfBroken(f: File, force: Boolean = false, dryRun: Boolean = false): Int {
+        val len = f.length()
+        if (len < 64 || len > 256L shl 20) return 0
+        var bitPos = -1L
+        try {
+            RandomAccessFile(f, "r").use { raf ->
+                val h = ByteArray(64); raf.readFully(h)
+                if (h[0] != 0x7f.toByte() || h[1] != 'E'.code.toByte() || h[4] != 2.toByte() || h[5] != 1.toByte()) return 0
+                val hb = ByteBuffer.wrap(h).order(ByteOrder.LITTLE_ENDIAN)
+                if ((hb.getShort(18).toInt() and 0xffff) != 183) return 0            // EM_AARCH64
+                val phoff = hb.getLong(32); val phentsize = hb.getShort(54).toInt() and 0xffff; val phnum = hb.getShort(56).toInt() and 0xffff
+                if (phoff <= 0 || phentsize < 56 || phnum > 128 || phoff + phnum.toLong() * phentsize > len) return 0
+                val ph = ByteArray(phnum * phentsize); raf.seek(phoff); raf.readFully(ph)
+                val pb = ByteBuffer.wrap(ph).order(ByteOrder.LITTLE_ENDIAN)
+                var noteOff = -1L; var noteSize = 0L
+                for (i in 0 until phnum) if (pb.getInt(i * phentsize) == 0x6474e553) { noteOff = pb.getLong(i * phentsize + 8); noteSize = pb.getLong(i * phentsize + 32) }
+                if (noteOff <= 0 || noteSize < 16 || noteSize > 4096 || noteOff + noteSize > len) return 0
+                val nt = ByteArray(noteSize.toInt()); raf.seek(noteOff); raf.readFully(nt)
+                val nb = ByteBuffer.wrap(nt).order(ByteOrder.LITTLE_ENDIAN)
+                var o = 0; var found = -1L
+                while (found < 0 && o + 12 <= nt.size) {
+                    val namesz = nb.getInt(o); val descsz = nb.getInt(o + 4); val type = nb.getInt(o + 8)
+                    if (namesz < 0 || descsz < 0) break
+                    val desc = o + 12 + ((namesz + 3) and 3.inv())
+                    if (type == 5 && namesz == 4 && nt[o + 12] == 'G'.code.toByte() && nt[o + 13] == 'N'.code.toByte()) { // NT_GNU_PROPERTY_TYPE_0
+                        var q = desc
+                        while (q + 8 <= desc + descsz && q + 8 <= nt.size) {
+                            val prType = nb.getInt(q); val prSize = nb.getInt(q + 4)
+                            if (prSize < 0) break
+                            if (prType == 0xc0000000.toInt() && prSize >= 4 && q + 12 <= nt.size) {   // GNU_PROPERTY_AARCH64_FEATURE_1_AND
+                                if ((nb.getInt(q + 8) and 1) != 0) found = noteOff + q + 8     // BTI
+                                break
+                            }
+                            q += 8 + ((prSize + 7) and 7.inv())
+                        }
+                    }
+                    o = desc + ((descsz + 7) and 7.inv())
+                }
+                if (found < 0) return 0
+                bitPos = found
+            }
+        } catch (_: Exception) { return 0 }
+        if (bitPos < 0) return 0
+        val d = runCatching { f.readBytes() }.getOrNull() ?: return 0
+        val b = ByteBuffer.wrap(d).order(ByteOrder.LITTLE_ENDIAN)
+        val phoff = b.getLong(32); val phentsize = b.getShort(54).toInt() and 0xffff; val phnum = b.getShort(56).toInt() and 0xffff
+        val shoff = b.getLong(40); val shentsize = b.getShort(58).toInt() and 0xffff; val shnum = b.getShort(60).toInt() and 0xffff
+        val haveSections = shoff > 0 && shentsize >= 64 && shoff + shnum.toLong() * shentsize <= d.size
+        if (!haveSections && !force) return 0
+        class Load(val off: Long, val va: Long, val size: Long)
+        val loads = (0 until phnum).map { phoff.toInt() + it * phentsize }.filter { b.getInt(it) == 1 }
+            .map { Load(b.getLong(it + 8), b.getLong(it + 16), b.getLong(it + 32)) }
+        fun fileOff(v: Long): Int? = loads.firstOrNull { v >= it.va && v < it.va + it.size }?.let { (v - it.va + it.off).toInt() }
+        var broken = false
+        for (i in 0 until (if (haveSections) shnum else 0)) {
+            val sh = (shoff + i.toLong() * shentsize).toInt()
+            if (b.getInt(sh + 4) != 11) continue                                       // SHT_DYNSYM
+            val off = b.getLong(sh + 24); val size = b.getLong(sh + 32)
+            if (off < 0 || off + size > d.size) return 0
+            var o = off + 24
+            while (o + 24 <= off + size) {
+                val info = d[(o + 4).toInt()].toInt() and 0xf; val shndx = b.getShort((o + 6).toInt()).toInt() and 0xffff
+                val value = b.getLong((o + 8).toInt())
+                if (info == 2 && shndx != 0 && value != 0L) {                          // a defined STT_FUNC
+                    val fo = fileOff(value)
+                    if (fo != null && fo + 4 <= d.size) {
+                        val ins = b.getInt(fo)
+                        // bti / bti c / bti j / bti jc, paciasp, pacibsp (the last two are valid "bti c" landing pads)
+                        val pad = (ins and 0xffffff3f.toInt()) == 0xd503241f.toInt() || ins == 0xd503233f.toInt() || ins == 0xd503237f.toInt()
+                        if (!pad) { broken = true; break }
+                    }
+                }
+                o += 24
+            }
+            break
+        }
+        if (!broken && !force) return 0
+        if (dryRun) return 1                                                       // would change, nothing written
+        if (!f.canWrite()) f.setWritable(true, true)
+        RandomAccessFile(f, "rw").use { raf ->
+            val cur = ByteArray(1); raf.seek(bitPos); raf.readFully(cur)
+            cur[0] = (cur[0].toInt() and 1.inv()).toByte()
+            raf.seek(bitPos); raf.write(cur)
+        }
+        return 1
+    }
 }

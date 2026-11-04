@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">ذاكرة الضيف</string>
     <string name="vs_ram_auto">تلقائي</string>
+    <string name="vs_ram_host">المضيف / الأقصى</string>
+    <string name="vs_ram_custom">مخصص</string>
+    <string name="vs_ram_custom_hint">الكمية</string>
     <string name="vs_radio_title">الراديو</string>
     <string name="vs_radio">محاكاة وحدة الراديو</string>
     <string name="vs_radio_sub">الاتصال الهاتفي وIMEI والإشارة. عند الإيقاف: يتصرف البرنامج الثابت كجهاز لوحي يعمل بالواي فاي</string>

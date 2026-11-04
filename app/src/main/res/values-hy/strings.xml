@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Հյուրի RAM</string>
     <string name="vs_ram_auto">Ինքնաշխատ</string>
+    <string name="vs_ram_host">Հոսթ / առավելագույն</string>
+    <string name="vs_ram_custom">Հատուկ</string>
+    <string name="vs_ram_custom_hint">Քանակ</string>
     <string name="vs_network">Ցուցադրվող ցանց</string>
     <string name="vs_network_sub">Ինչ է ցույց տալիս կարգավիճակի գոտին՝ 2G-ից մինչև LTE։ Լռելյայնը 2G է, քանի որ ոչ բոլոր որոնվածքներն են աշխատում 3G-ի կամ ավելի նորի հետ</string>
     <string name="m_network">Ցանց</string>

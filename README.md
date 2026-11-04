@@ -21,6 +21,7 @@ AEmulator Plus boots a real Android 1.0–17 system image straight from a firmwa
 - Hardware graphics through the GL bridge, sound, touch and multitouch, network with a modern TLS proxy
 - Shared memory-card folder for APKs, music and photos
 - **VM screen themes and theme editor**: the navigation bar and the frame around the guest screen follow a theme — Original, Sunset, Gingerbread 2.x, Honeycomb 3.x, Holo 4.x or Lollipop 5.x — or your own, made in an editor with a live preview (key shapes and size, bar/key/pressed/frame colours, glow and halo, floating or flat bar, frame picture, rounded screen corners). Themes can be shared as `.aetheme` files. App settings › Appearance › VM screen theme.
+- **Arrange your library**: press and hold a ROM and drag it up or down to reorder it (classic list and 0.0.0.3 grid), and group ROMs into named folders that open and close — drop a ROM on a folder, or use its ⋮ menu › Move to folder
 - Material 3 Expressive interface in 19 languages
 - Free and open source (GPL-3.0)
 

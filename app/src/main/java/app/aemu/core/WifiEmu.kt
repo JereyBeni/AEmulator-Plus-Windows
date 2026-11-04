@@ -1,4 +1,6 @@
-/* Modified for AEmulator Super Plus, 2026-10-11: signal level and neighbouring networks. GPL-3.0; see LICENSE and NOTICE.md. */
+/* Modified for AEmulator Super Plus, 2026-10-11: signal level and neighbouring networks.
+ * Modified for AEmulator Plus, 2026-11-01: Android 8 - 17 on the 64-bit engine.
+ * Modified for AEmulator Plus, 2026-11-02: the settings screen asks about the engine the VM really runs on. GPL-3.0; see LICENSE and NOTICE.md. */
 package app.aemu.core
 
 import java.io.ByteArrayOutputStream
@@ -45,9 +47,29 @@ object WifiEmu {
     const val GINGERBREAD_MIN_API = 9
     const val GINGERBREAD_MAX_API = 10
 
-    /** Guests with the Wi-Fi service (the engine that has the guest services). */
+    /**
+     * Android 8.0 - 17 (API 26 - 37), which run on the 64-bit engine ([Engine.N64]). The same service answers WifiManager there
+     * (the guest's own IWifiManager is read at start-up, see guest-wifi WifiService) and registers the connection as a Wi-Fi
+     * network with ConnectivityService; when the guest refuses it as a Wi-Fi network it registers the Ethernet placeholder
+     * instead, so the guest keeps its internet either way.
+     */
+    const val TREBLE_MIN_API = 26
+    const val TREBLE_MAX_API = 37
+
+    /** Guests with the Wi-Fi service (the engines that have the guest services). */
     fun supported(engine: Engine, api: Int, recovery: Boolean, nativeUi: Boolean) =
-        engine == Engine.KK && (api in MIN_API..MAX_API || api in GINGERBREAD_MIN_API..GINGERBREAD_MAX_API) && !recovery && !nativeUi
+        ((engine == Engine.KK && (api in MIN_API..MAX_API || api in GINGERBREAD_MIN_API..GINGERBREAD_MAX_API)) ||
+            (engine == Engine.N64 && api in TREBLE_MIN_API..TREBLE_MAX_API)) && !recovery && !nativeUi
+
+    /**
+     * Whether the settings screen offers Wi-Fi for [img]. The engine stored with an image is only the importer's default (the
+     * universal one, see Analyzer); the VM runs a firmware of Android 8.0+ (and any arm64 one) on the 64-bit engine, picked by
+     * [GuestImage.effective] when it starts, and that is the engine [supported] has to be asked about, as GuestVm does.
+     * [binder64] only matters below Android 8 and is left off here: finding it out scans the firmware's programs, too slow
+     * for a screen that is being drawn.
+     */
+    fun offered(img: GuestImage, binder64: Boolean = false) =
+        supported(img.effective(binder64).engine, img.api, recovery = false, nativeUi = false)
 
     /** SSID: any printable text, at most 32 bytes in UTF-8 (the 802.11 limit); never cut in the middle of a character. */
     fun cleanSsid(v: String): String {

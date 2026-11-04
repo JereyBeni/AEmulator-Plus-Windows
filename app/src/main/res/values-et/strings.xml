@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Külalise RAM</string>
     <string name="vs_ram_auto">Automaatne</string>
+    <string name="vs_ram_host">Host / maks.</string>
+    <string name="vs_ram_custom">Kohandatud</string>
+    <string name="vs_ram_custom_hint">Kogus</string>
     <string name="vs_network">Teatatav võrk</string>
     <string name="vs_network_sub">Mida olekuriba näitab: 2G-st LTE-ni. Vaikimisi 2G, kuna kõik püsivarad ei tööta 3G või uuemaga</string>
     <string name="m_network">Võrk</string>

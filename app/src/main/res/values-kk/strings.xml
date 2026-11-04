@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Қонақ RAM</string>
     <string name="vs_ram_auto">Автоматты</string>
+    <string name="vs_ram_host">Хост / макс.</string>
+    <string name="vs_ram_custom">Өзгеше</string>
+    <string name="vs_ram_custom_hint">Көлемі</string>
     <string name="vs_network">Көрсетілетін желі</string>
     <string name="vs_network_sub">Күй жолағында көрінетіні: 2G-ден LTE-ге дейін. Әдепкі — 2G, өйткені әр микробағдарлама 3G немесе одан жоғарыны қолдамайды</string>
     <string name="m_network">Желі</string>

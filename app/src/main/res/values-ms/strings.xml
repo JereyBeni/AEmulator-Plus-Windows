@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM tetamu</string>
     <string name="vs_ram_auto">Automatik</string>
+    <string name="vs_ram_host">Hos / maks.</string>
+    <string name="vs_ram_custom">Tersuai</string>
+    <string name="vs_ram_custom_hint">Jumlah</string>
     <string name="vs_network">Rangkaian yang dilaporkan</string>
     <string name="vs_network_sub">Apa yang dipaparkan bar status: 2G hingga LTE. Lalai 2G, kerana tidak semua perisian tegar dapat mengendalikan 3G atau lebih baharu</string>
     <string name="m_network">Rangkaian</string>

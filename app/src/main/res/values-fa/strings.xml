@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM مهمان</string>
     <string name="vs_ram_auto">خودکار</string>
+    <string name="vs_ram_host">میزبان / حداکثر</string>
+    <string name="vs_ram_custom">سفارشی</string>
+    <string name="vs_ram_custom_hint">مقدار</string>
     <string name="vs_radio_title">رادیو</string>
     <string name="vs_radio">شبیه‌سازی ماژول رادیو</string>
     <string name="vs_radio_sub">تلفن، IMEI و سیگنال. خاموش: فرم‌ویر مانند یک تبلت فقط Wi-Fi رفتار می‌کند</string>

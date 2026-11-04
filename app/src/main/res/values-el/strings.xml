@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM επισκέπτη</string>
     <string name="vs_ram_auto">Αυτόματα</string>
+    <string name="vs_ram_host">Host / μέγ.</string>
+    <string name="vs_ram_custom">Προσαρμοσμένο</string>
+    <string name="vs_ram_custom_hint">Ποσό</string>
     <string name="vs_network">Αναφερόμενο δίκτυο</string>
     <string name="vs_network_sub">Αυτό που εμφανίζει η γραμμή κατάστασης: από 2G έως LTE. Προεπιλογή 2G, καθώς δεν χειρίζεται κάθε firmware το 3G ή νεότερα</string>
     <string name="m_network">Δίκτυο</string>

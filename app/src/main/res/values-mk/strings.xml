@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM на гостинскиот систем</string>
     <string name="vs_ram_auto">Автоматски</string>
+    <string name="vs_ram_host">Хост / макс.</string>
+    <string name="vs_ram_custom">Прилагодено</string>
+    <string name="vs_ram_custom_hint">Количина</string>
     <string name="vs_network">Пријавена мрежа</string>
     <string name="vs_network_sub">Што покажува статусната лента: од 2G до LTE. Стандардно е 2G, бидејќи не секој фирмвер поддржува 3G или понов</string>
     <string name="m_network">Мрежа</string>

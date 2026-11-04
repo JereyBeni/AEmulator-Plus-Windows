@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM do convidado</string>
     <string name="vs_ram_auto">Automática</string>
+    <string name="vs_ram_host">Anfitrião / máx.</string>
+    <string name="vs_ram_custom">Personalizado</string>
+    <string name="vs_ram_custom_hint">Quantidade</string>
     <string name="vs_radio_title">Rádio</string>
     <string name="vs_radio">Emular o módulo de rádio</string>
     <string name="vs_radio_sub">Telefonia, IMEI e sinal. Desativado: o firmware comporta-se como um tablet só com Wi-Fi</string>

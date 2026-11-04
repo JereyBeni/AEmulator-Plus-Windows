@@ -42,6 +42,33 @@ class WifiEmuTest {
         assertFalse(WifiEmu.supported(Engine.KK, 19, true, false))
         assertFalse(WifiEmu.supported(Engine.KK, 19, false, true))
     }
+    @Test fun androidEightToSeventeenRunOnTheSixtyFourBitEngine() {
+        for (api in 26..37) assertTrue("api $api", WifiEmu.supported(Engine.N64, api, false, false))
+        assertFalse(WifiEmu.supported(Engine.N64, 25, false, false))   // 5.0 - 7.1 keep to the 32-bit engine
+        assertFalse(WifiEmu.supported(Engine.N64, 38, false, false))
+        assertFalse(WifiEmu.supported(Engine.N64, 30, true, false))    // recovery
+        assertFalse(WifiEmu.supported(Engine.N64, 30, false, true))    // native UI / low power boot
+        assertFalse(WifiEmu.supported(Engine.KK, 26, false, false))
+        assertFalse(WifiEmu.supported(Engine.GB, 30, false, false))
+    }
+    /** An image as the importer stores it: always the universal engine, whatever the firmware needs (Analyzer: Engine.forApi). */
+    private fun stored(api: Int, abi: String = "armeabi-v7a") = GuestImage(
+        id = "t", name = "t", release = "", api = api, brand = "", model = "", skin = "", engine = Engine.KK, abi = abi,
+        bootclasspath = "", exports = emptyMap(), dirs = emptyList(), services = emptyList(), sdcardPath = "",
+        settings = VmSettings(), createdAt = 0,
+    )
+    @Test fun settingsOfferWifiForAndroidEightToSeventeenWhateverEngineIsStored() {
+        for (api in 26..37) {
+            assertTrue("arm64 api $api", WifiEmu.offered(stored(api, "arm64-v8a")))
+            assertTrue("32-bit api $api", WifiEmu.offered(stored(api)))
+        }
+        assertFalse(WifiEmu.offered(stored(38, "arm64-v8a")))
+        // 32-bit translation off: the firmware stays on the universal engine, which has no service for 8.0+
+        assertFalse(WifiEmu.offered(stored(30).let { it.copy(settings = it.settings.copy(translate32 = false)) }))
+        // older firmware keeps the universal engine and its range
+        for (api in listOf(9, 10, 14, 19, 25)) assertTrue("api $api", WifiEmu.offered(stored(api)))
+        for (api in listOf(8, 11, 12, 13)) assertFalse("api $api", WifiEmu.offered(stored(api)))
+    }
     @Test fun propertiesRoundTrip() {
         val s = VmSettings(wifi = true, wifiSsid = "Мой \"Wi-Fi\" = test", wifiPassword = "pa ss:w0rd#!")
         val p = Properties().apply { load(String(WifiEmu.encode(WifiEmu.properties(s)), Charsets.ISO_8859_1).let(::StringReader)) }

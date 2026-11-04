@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">ဧည့်သည် RAM</string>
     <string name="vs_ram_auto">အလိုအလျောက်</string>
+    <string name="vs_ram_host">ဟို့စ် / အများဆုံး</string>
+    <string name="vs_ram_custom">စိတ်ကြိုက်</string>
+    <string name="vs_ram_custom_hint">ပမာဏ</string>
     <string name="vs_network">ပြသမည့် ကွန်ရက်</string>
     <string name="vs_network_sub">အခြေအနေဘားတွင် ပြသမည့်အရာ- 2G မှ LTE အထိ။ မူလမှာ 2G ဖြစ်သည်၊ ဖမ်းဝဲတိုင်းက 3G သို့မဟုတ် ထို့ထက်ပိုသစ်သည်ကို မကိုင်တွယ်နိုင်သောကြောင့်ဖြစ်သည်</string>
     <string name="m_network">ကွန်ရက်</string>

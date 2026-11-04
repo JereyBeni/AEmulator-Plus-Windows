@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">სტუმრის RAM</string>
     <string name="vs_ram_auto">ავტომატური</string>
+    <string name="vs_ram_host">ჰოსტი / მაქს.</string>
+    <string name="vs_ram_custom">მორგებული</string>
+    <string name="vs_ram_custom_hint">რაოდენობა</string>
     <string name="vs_network">ნაჩვენები ქსელი</string>
     <string name="vs_network_sub">რას აჩვენებს სტატუსის პანელი: 2G-დან LTE-მდე. ნაგულისხმევია 2G, რადგან ყველა ფირმვერი არ უმკლავდება 3G-ს ან უფრო ახალს</string>
     <string name="m_network">ქსელი</string>

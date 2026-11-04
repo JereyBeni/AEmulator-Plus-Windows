@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM hosťovaného systému</string>
     <string name="vs_ram_auto">Automaticky</string>
+    <string name="vs_ram_host">Hostiteľ / max.</string>
+    <string name="vs_ram_custom">Vlastné</string>
+    <string name="vs_ram_custom_hint">Množstvo</string>
     <string name="vs_network">Hlásená sieť</string>
     <string name="vs_network_sub">Čo zobrazuje stavový riadok: od 2G po LTE. Predvolené je 2G, pretože nie každý firmvér zvláda 3G a novšie</string>
     <string name="m_network">Sieť</string>

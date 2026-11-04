@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM tamu</string>
     <string name="vs_ram_auto">Otomatis</string>
+    <string name="vs_ram_host">Host / maks.</string>
+    <string name="vs_ram_custom">Kustom</string>
+    <string name="vs_ram_custom_hint">Jumlah</string>
     <string name="vs_radio_title">Radio</string>
     <string name="vs_radio">Emulasikan modul radio</string>
     <string name="vs_radio_sub">Telepon, IMEI, dan sinyal. Mati: firmware berperilaku seperti tablet Wi-Fi</string>

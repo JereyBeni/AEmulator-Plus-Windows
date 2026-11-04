@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM на госта</string>
     <string name="vs_ram_auto">Автоматично</string>
+    <string name="vs_ram_host">Хост / макс.</string>
+    <string name="vs_ram_custom">По избор</string>
+    <string name="vs_ram_custom_hint">Количество</string>
     <string name="vs_network">Показвана мрежа</string>
     <string name="vs_network_sub">Какво показва лентата на състоянието: от 2G до LTE. По подразбиране е 2G, защото не всеки фърмуер работи с 3G или по-нови</string>
     <string name="m_network">Мрежа</string>

@@ -338,7 +338,9 @@ class GuestRunner(
 
         /** RAM the guest is told it has: the user's choice, or what phones of that Android version shipped with. */
         fun guestRamMb(api: Int, chosen: Int): Int {
-            if (chosen > 0) return chosen
+            // Modified for AEmulator Plus (2026-11-04): "host / max" is a negative setting, resolved to the host's RAM here
+            val picked = RamChoice.resolve(chosen)
+            if (picked > 0) return picked
             val typical = when { api <= 10 -> 512; api <= 15 -> 1024; api <= 19 -> 2048; api <= 23 -> 3072; else -> 4096 }
             val hostMb = runCatching {
                 java.io.File("/proc/meminfo").useLines { l -> l.first { it.startsWith("MemTotal:") } }.split(Regex("\\s+"))[1].toLong() / 1024

@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Gast-RAM</string>
     <string name="vs_ram_auto">Automatisch</string>
+    <string name="vs_ram_host">Host / max.</string>
+    <string name="vs_ram_custom">Benutzerdefiniert</string>
+    <string name="vs_ram_custom_hint">Menge</string>
     <string name="vs_radio_title">Funkmodul</string>
     <string name="vs_radio">Funkmodul emulieren</string>
     <string name="vs_radio_sub">Telefonie, IMEI und Signal. Aus: Die Firmware verhält sich wie ein WLAN-Tablet</string>

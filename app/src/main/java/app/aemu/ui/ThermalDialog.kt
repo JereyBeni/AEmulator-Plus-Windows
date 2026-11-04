@@ -1,3 +1,4 @@
+/* Modified for AEmulator Plus, 2026-11-04: opened from the running machine's menu; stays open and applies live. GPL-3.0; see LICENSE and NOTICE.md. */
 package app.aemu.ui
 
 import androidx.compose.foundation.layout.Column
@@ -7,6 +8,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,9 +33,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Edit of the guest's /sys/devices/virtual/thermal/thermal_zone17/temp from the machine's menu. The value is kept in the
- * machine's settings (so it survives reboots) and written to the guest's sysfs at once, so a running guest sees it
- * on its next read.
+ * Edit of the guest's /sys/devices/virtual/thermal/thermal_zone17/temp from the running machine's menu. The value is kept
+ * in the machine's settings (so it survives reboots) and written to the guest's sysfs at once, so a running guest sees it
+ * on its next read. The dialog stays open after a change, so the temperature can be adjusted again and again (slider or
+ * typed value) while the guest runs.
  */
 @Composable
 fun ThermalDialog(img: GuestImage, onDismiss: () -> Unit) {
@@ -45,21 +48,28 @@ fun ThermalDialog(img: GuestImage, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
     var bad by remember { mutableStateOf(false) }
 
+    fun fill(fresh: app.aemu.core.VmSettings, now: Int?, h: Int?) {
+        settings = fresh; served = now; host = h
+        text = ((fresh.thermalTemp ?: ThermalSysfs.effective(fresh) ?: now ?: h)?.let { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) }) ?: ""
+    }
+
     LaunchedEffect(img.id) {
         withContext(Dispatchers.IO) {
             val fresh = ImageStore.get(ctx, img.id)?.settings ?: img.settings
             val now = ThermalSysfs.current(VmPaths(ctx, img.id).root)
             val h = ThermalSysfs.hostTemp()
-            settings = fresh; served = now; host = h
-            text = ((fresh.thermalTemp ?: ThermalSysfs.effective(fresh) ?: h)?.let { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) }) ?: ""
+            withContext(Dispatchers.Main) { fill(fresh, now, h) }
         }
     }
 
+    // writes the value (null = back to the default) and refreshes what the dialog shows; the dialog stays open
     fun save(newTemp: Int?) = scope.launch(Dispatchers.IO) {
         val updated = ImageStore.update(ctx, img.id) { it.copy(settings = it.settings.copy(thermalTemp = newTemp)) }
         val root = VmPaths(ctx, img.id).root
         if (updated != null && root.isDirectory) ThermalSysfs.apply(root, updated.settings)
-        withContext(Dispatchers.Main) { onDismiss() }
+        val now = ThermalSysfs.current(root)
+        val h = ThermalSysfs.hostTemp()
+        withContext(Dispatchers.Main) { fill(updated?.settings ?: settings, now, h); bad = false }
     }
 
     AlertDialog(
@@ -83,6 +93,14 @@ fun ThermalDialog(img: GuestImage, onDismiss: () -> Unit) {
                     supportingText = { Text(stringResource(if (bad) R.string.thermal_invalid else R.string.thermal_hint)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 )
+                // quick live adjustment: dragging shows the value, letting go applies it to the running guest
+                val sliderC = (ThermalSysfs.parseInput(text) ?: ThermalSysfs.COOL_MILLI_C) / 1000f
+                Slider(
+                    value = sliderC.coerceIn(0f, 100f),
+                    onValueChange = { text = "%.1f".format(java.util.Locale.ROOT, it); bad = false },
+                    onValueChangeFinished = { ThermalSysfs.parseInput(text)?.let { save(it) } },
+                    valueRange = 0f..100f,
+                )
             }
         },
         confirmButton = {
@@ -94,7 +112,7 @@ fun ThermalDialog(img: GuestImage, onDismiss: () -> Unit) {
         dismissButton = {
             Column {
                 TextButton(onClick = { save(null) }) { Text(stringResource(R.string.thermal_reset)) }
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
             }
         },
     )

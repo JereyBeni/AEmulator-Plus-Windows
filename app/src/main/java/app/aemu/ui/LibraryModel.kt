@@ -127,7 +127,9 @@ class LibraryModel(app: Application) : AndroidViewModel(app) {
 
     fun rename(img: GuestImage, name: String) = update(img) { it.copy(name = name) }
 
-    fun updateSettings(img: GuestImage, s: VmSettings) = update(img) { it.copy(settings = s) }
+    /** [name] is the new machine name from the settings sheet; null or blank keeps the current one. */
+    fun updateSettings(img: GuestImage, s: VmSettings, name: String? = null) =
+        update(img) { it.copy(settings = s, name = name?.trim()?.takeIf { n -> n.isNotEmpty() } ?: it.name) }
 
     private fun update(img: GuestImage, f: (GuestImage) -> GuestImage) {
         viewModelScope.launch(Dispatchers.IO) {

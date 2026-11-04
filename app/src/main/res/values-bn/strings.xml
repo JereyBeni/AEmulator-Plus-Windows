@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">গেস্ট RAM</string>
     <string name="vs_ram_auto">স্বয়ংক্রিয়</string>
+    <string name="vs_ram_host">হোস্ট / সর্বোচ্চ</string>
+    <string name="vs_ram_custom">কাস্টম</string>
+    <string name="vs_ram_custom_hint">পরিমাণ</string>
     <string name="vs_network">প্রদর্শিত নেটওয়ার্ক</string>
     <string name="vs_network_sub">স্ট্যাটাস বারে যা দেখানো হয়: 2G থেকে LTE। ডিফল্ট 2G, কারণ সব ফার্মওয়্যার 3G বা তার নতুন নেটওয়ার্ক সামলাতে পারে না</string>
     <string name="m_network">নেটওয়ার্ক</string>

@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">客户机内存</string>
     <string name="vs_ram_auto">自动</string>
+    <string name="vs_ram_host">主机 / 最大</string>
+    <string name="vs_ram_custom">自定义</string>
+    <string name="vs_ram_custom_hint">容量</string>
     <string name="vs_radio_title">无线电</string>
     <string name="vs_radio">模拟无线电模块</string>
     <string name="vs_radio_sub">电话、IMEI 和信号。关闭：固件的行为类似仅支持 Wi-Fi 的平板</string>

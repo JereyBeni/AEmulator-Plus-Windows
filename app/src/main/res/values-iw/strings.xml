@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">זיכרון RAM של האורח</string>
     <string name="vs_ram_auto">אוטומטי</string>
+    <string name="vs_ram_host">מארח / מקסימום</string>
+    <string name="vs_ram_custom">מותאם אישית</string>
+    <string name="vs_ram_custom_hint">כמות</string>
     <string name="vs_network">רשת מדווחת</string>
     <string name="vs_network_sub">מה שמוצג בשורת המצב: מ-2G עד LTE. ברירת המחדל 2G, כי לא כל קושחה מתמודדת עם 3G ומעלה</string>
     <string name="m_network">רשת</string>

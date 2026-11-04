@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.BatteryStd
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.InstallMobile
+import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Keyboard
@@ -590,7 +591,7 @@ class VmActivity : ComponentActivity() {
         }
     }
 
-    private enum class Dlg { NONE, SMS, CALL, WEA, BATTERY, ADB, SHELL, DEVICE }
+    private enum class Dlg { NONE, SMS, CALL, WEA, BATTERY, ADB, SHELL, DEVICE, THERMAL }
 
     // position of the floating menu button; only lasts until the emulator is started again (see resetMenuOffset)
     private var menuOffset by mutableStateOf(Offset.Zero)
@@ -1237,6 +1238,8 @@ class VmActivity : ComponentActivity() {
                         enabled = running, onClick = { menu = false; pickApk.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) })
                     DropdownMenuItem(text = { Text(stringResource(R.string.m_device)) }, leadingIcon = { Icon(Icons.Rounded.Tune, null) },
                         enabled = running && vm.img.api >= 17, onClick = { menu = false; dialog = Dlg.DEVICE })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.thermal_menu)) }, leadingIcon = { Icon(Icons.Rounded.Thermostat, null) },
+                        onClick = { menu = false; dialog = Dlg.THERMAL })
                     DropdownMenuItem(text = { Text(stringResource(R.string.m_adb)) }, leadingIcon = { Icon(Icons.Rounded.Lan, null) },
                         enabled = running, onClick = { menu = false; dialog = Dlg.ADB })
                     DropdownMenuItem(text = { Text(stringResource(R.string.m_shell)) }, leadingIcon = { Icon(Icons.Rounded.Terminal, null) },
@@ -1281,6 +1284,7 @@ class VmActivity : ComponentActivity() {
                 Dlg.ADB -> AdbDialog { dialog = Dlg.NONE }
                 Dlg.SHELL -> ShellDialog { dialog = Dlg.NONE }
                 Dlg.DEVICE -> DeviceDialog { dialog = Dlg.NONE }
+                Dlg.THERMAL -> ThermalDialog(vm.img) { dialog = Dlg.NONE }
                 Dlg.NONE -> {}
             }
 

@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Оперативна памʼять</string>
     <string name="vs_ram_auto">Автоматично</string>
+    <string name="vs_ram_host">Хост / макс.</string>
+    <string name="vs_ram_custom">Власне</string>
+    <string name="vs_ram_custom_hint">Обсяг</string>
     <string name="vs_radio_title">Радіо</string>
     <string name="vs_radio">Емуляція радіомодуля</string>
     <string name="vs_radio_sub">Телефонія, IMEI і мережа. Вимк.: прошивка поводиться як Wi-Fi планшет</string>

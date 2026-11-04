@@ -1,3 +1,5 @@
+/* Modified for AEmulator Plus, 2026-11-04: thermal sensor entry moved from the library card menu to the runtime menu (VmActivity). */
+/* Modified for AEmulator Plus, 2026-11-01: folders (move-to-folder menu item, new-folder action). GPL-3.0; see LICENSE and NOTICE.md. */
 package app.aemu.ui
 
 import android.text.format.Formatter
@@ -28,10 +30,11 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.FileOpen
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.DropdownMenu
@@ -119,6 +122,7 @@ fun MachineCard(
     onNewMachine: () -> Unit,
     onReset: () -> Unit,
     onDelete: () -> Unit,
+    onMoveToFolder: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
     val press = remember { MutableInteractionSource() }
@@ -126,8 +130,6 @@ fun MachineCard(
     // expressive press: the card gives a little under the finger and springs back
     val scale by animateFloatAsState(if (pressed) 0.96f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "press")
     var menu by remember { mutableStateOf(false) }
-    var thermal by remember { mutableStateOf(false) }
-    if (thermal) ThermalDialog(img, onDismiss = { thermal = false })
     ElevatedCard(
         onClick = onStart,
         interactionSource = press,
@@ -146,12 +148,12 @@ fun MachineCard(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text(stringResource(R.string.settings)) }, leadingIcon = { Icon(Icons.Rounded.Tune, null) },
                         onClick = { menu = false; onSettings() })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.thermal_menu)) }, leadingIcon = { Icon(Icons.Rounded.Thermostat, null) },
-                        onClick = { menu = false; thermal = true })
                     DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, leadingIcon = { Icon(Icons.Rounded.Edit, null) },
                         onClick = { menu = false; onRename() })
                     DropdownMenuItem(text = { Text(stringResource(R.string.new_machine)) }, leadingIcon = { Icon(Icons.Rounded.ContentCopy, null) },
                         onClick = { menu = false; onNewMachine() })
+                    if (onMoveToFolder != null) DropdownMenuItem(text = { Text(stringResource(R.string.folder_move)) }, leadingIcon = { Icon(Icons.Rounded.FolderOpen, null) },
+                        onClick = { menu = false; onMoveToFolder() })
                     HorizontalDivider()
                     DropdownMenuItem(text = { Text(stringResource(R.string.reset_data)) }, leadingIcon = { Icon(Icons.Rounded.RestartAlt, null) },
                         onClick = { menu = false; onReset() })
@@ -187,9 +189,9 @@ fun MachineCard(
     }
 }
 
-/** "+": an M3 Expressive FAB menu — import a firmware file, or open the firmware library. */
+/** "+": an M3 Expressive FAB menu — import a firmware file, open the firmware library, or make a folder. */
 @Composable
-fun HomeFab(expanded: Boolean, onToggle: (Boolean) -> Unit, onImport: () -> Unit, onLibrary: () -> Unit) {
+fun HomeFab(expanded: Boolean, onToggle: (Boolean) -> Unit, onImport: () -> Unit, onLibrary: () -> Unit, onNewFolder: () -> Unit) {
     FloatingActionButtonMenu(
         expanded = expanded,
         button = {
@@ -203,6 +205,8 @@ fun HomeFab(expanded: Boolean, onToggle: (Boolean) -> Unit, onImport: () -> Unit
             text = { Text(stringResource(R.string.add_import)) })
         FloatingActionButtonMenuItem(onClick = { onToggle(false); onLibrary() }, icon = { Icon(Icons.Rounded.Inventory2, null) },
             text = { Text(stringResource(R.string.lib_title)) })
+        FloatingActionButtonMenuItem(onClick = { onToggle(false); onNewFolder() }, icon = { Icon(Icons.Rounded.CreateNewFolder, null) },
+            text = { Text(stringResource(R.string.folder_new)) })
     }
 }
 

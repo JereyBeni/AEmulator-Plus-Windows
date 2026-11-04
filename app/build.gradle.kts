@@ -59,7 +59,7 @@ android {
         //noinspection ExpiredTargetSdkVersion
         targetSdk = 28
         versionCode = 34
-        versionName = "0.0.0.3.8" // <AEmulator base>.<Plus release>
+        versionName = "0.0.0.3.9" // <AEmulator base>.<Plus release>
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -84,7 +84,8 @@ android {
         }
     }
 
-    sourceSets["main"].assets.setSrcDirs(listOf(engineOut, legalAssetsDir))
+    // skinAssets/skins: the device skin themes bundled with the app (see VmThemes.skins)
+    sourceSets["main"].assets.setSrcDirs(listOf(engineOut, legalAssetsDir, file("src/main/skinAssets")))
 
     packaging {
         // исполняемые файлы движка лежат как lib*.so и должны распаковываться на диск

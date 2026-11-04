@@ -103,6 +103,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">RAM gościa</string>
     <string name="vs_ram_auto">Automatycznie</string>
+    <string name="vs_ram_host">Host / maks.</string>
+    <string name="vs_ram_custom">Własne</string>
+    <string name="vs_ram_custom_hint">Ilość</string>
     <string name="vs_radio_title">Radio</string>
     <string name="vs_radio">Emuluj moduł radiowy</string>
     <string name="vs_radio_sub">Telefonia, IMEI i sygnał. Wyłączone: firmware zachowuje się jak tablet tylko z Wi-Fi</string>

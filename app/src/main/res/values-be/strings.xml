@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Памяць госця</string>
     <string name="vs_ram_auto">Аўтаматычна</string>
+    <string name="vs_ram_host">Хост / макс.</string>
+    <string name="vs_ram_custom">Свой</string>
+    <string name="vs_ram_custom_hint">Колькасць</string>
     <string name="vs_network">Паведамляная сетка</string>
     <string name="vs_network_sub">Што паказвае радок стану: ад 2G да LTE. Па змаўчанні 2G, бо не кожная прашыўка працуе з 3G і навейшымі</string>
     <string name="m_network">Сетка</string>

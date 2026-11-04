@@ -1244,6 +1244,19 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
         }
         return unix_addr(nr, a[0], (const struct sockaddr_un *)a[1], (u64)a[2], PB(0));
     case NR_getsockname: {
+        // Added for AEmulator Plus (2026-11-03): an emulated netlink socket is an AF_UNIX socketpair end, so the real call answers
+        // with an unnamed AF_UNIX address (2 bytes). libnl's nl_connect() reads the local address back after bind() and fails with
+        // NLE_NOADDR unless it is a sockaddr_nl, so genl_connect() failed; libnetworkstackutilsjni.so of 17 calls it in JNI_OnLoad
+        // (generic netlink family "nl_android_apf") and returns JNI_ERR for uid 1073: the network stack process died, system_server
+        // threw "Lost network stack" and zygote exited with 137. Answer like a netlink socket the kernel has bound itself.
+        if (is_nl_fd((int)a[0])) {
+            if (!a[1] || !a[2]) return -14; /* EFAULT */
+            struct { u16 family; u16 pad; u32 pid; u32 groups; } nl = { 16 /*AF_NETLINK*/, 0, (u32)S0(NR_getpid), 0 };
+            u32 have = *(u32 *)a[2], n = have < sizeof nl ? have : (u32)sizeof nl;
+            memcpy((void *)a[1], &nl, n);
+            *(u32 *)a[2] = (u32)sizeof nl;
+            return 0;
+        }
         long r = S3(nr, a[0], a[1], a[2]);
         if (r == 0 && a[1] && a[2] && *(u32 *)a[2] > 2) {
             // a service's socket lives in the run directory as <name>.sock; the guest made it as /dev/socket/<name>
@@ -1533,6 +1546,17 @@ static long trap2(long nr, long *a, void *uc, char **pbp) {
             return 0;
         }
         long r = S5(nr, a[0], a[1], a[2], a[3], a[4]);
+        // SO_MARK read: fwmarkd of 8+ reads the socket's mark before setting its own (the set is forgiven above) and
+        // answers every bind-to-network with -errno when this fails, so NetworkMonitor's probes never get out
+        // ("Binding socket to network N failed: ENOPROTOOPT") and the Wi-Fi stays "validation failed". A guest socket
+        // has no mark: answer 0.
+        if (r < 0 && a[1] == 1 && a[2] == 36) {
+            if (!a[3] || !a[4]) return -14;                         // EFAULT
+            if (*(u32 *)a[4] < 4) return -22;                       // EINVAL
+            *(u32 *)a[3] = 0;
+            *(u32 *)a[4] = 4;
+            return 0;
+        }
         // SO_PEERCRED: every guest process is the host app's uid. The peer left the ids the guest gave it in
         // <root>/dev/.aemu-ids/<pid> (zygote of 13: "Only system UID is allowed to connect to Zygote").
         if (r == 0 && a[1] == 1 && a[2] == 17 && a[3] && a[4] && *(u32 *)a[4] >= 12) {

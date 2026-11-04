@@ -112,6 +112,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Gæstens RAM</string>
     <string name="vs_ram_auto">Automatisk</string>
+    <string name="vs_ram_host">Vært / maks.</string>
+    <string name="vs_ram_custom">Brugerdefineret</string>
+    <string name="vs_ram_custom_hint">Mængde</string>
     <string name="vs_network">Rapporteret netværk</string>
     <string name="vs_network_sub">Hvad statuslinjen viser: fra 2G til LTE. Standarden er 2G, fordi ikke al firmware fungerer med 3G eller nyere</string>
     <string name="m_network">Netværk</string>

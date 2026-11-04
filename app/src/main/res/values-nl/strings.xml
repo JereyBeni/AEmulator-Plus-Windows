@@ -113,6 +113,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Gastgeheugen (RAM)</string>
     <string name="vs_ram_auto">Automatisch</string>
+    <string name="vs_ram_host">Host / max.</string>
+    <string name="vs_ram_custom">Aangepast</string>
+    <string name="vs_ram_custom_hint">Hoeveelheid</string>
     <string name="vs_network">Gemeld netwerk</string>
     <string name="vs_network_sub">Wat de statusbalk toont: 2G tot LTE. Standaard 2G, omdat niet elke firmware 3G of nieuwer aankan</string>
     <string name="m_network">Netwerk</string>

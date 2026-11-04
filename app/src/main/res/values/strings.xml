@@ -114,6 +114,9 @@
     <string name="vs_dpi">DPI</string>
     <string name="vs_ram">Guest RAM</string>
     <string name="vs_ram_auto">Automatic</string>
+    <string name="vs_ram_host">Host / max</string>
+    <string name="vs_ram_custom">Custom</string>
+    <string name="vs_ram_custom_hint">Amount</string>
     <string name="vs_network">Reported network</string>
     <string name="vs_network_sub">What the status bar shows: 2G to LTE. The default is 2G, since not every firmware handles 3G or newer</string>
     <string name="m_network">Network</string>
@@ -145,7 +148,7 @@
     <string name="vs_strace">Trace system calls of services</string>
     <string name="vs_strace_sub">Service names separated by commas, e.g. mediaserver,zygote. Slows those services down and writes the trace to their logs. Applies at the next boot.</string>
     <string name="vs_wifi">Wi-Fi network</string>
-    <string name="vs_wifi_sub">Shows the host\'s internet to the VM as a connected Wi-Fi network instead of Ethernet. Android 2.3, 4.0–7.x. Applies at the next boot.</string>
+    <string name="vs_wifi_sub">Shows the host\'s internet to the VM as a connected Wi-Fi network instead of Ethernet. Android 2.3 and 4.0–17 (8–17: experimental). Applies at the next boot.</string>
     <string name="vs_wifi_ssid">Network name (SSID)</string>
     <string name="vs_wifi_ssid_sub">Up to 32 bytes</string>
     <string name="vs_wifi_ssid_error">The network name cannot be empty</string>
@@ -395,6 +398,12 @@
     <string name="th_title">VM screen theme</string>
     <string name="th_sub">Navigation bar keys, colours and the frame around the guest screen, styled after an Android era or your own design.</string>
     <string name="th_note">Themes change only the app around the VM; the firmware is never modified. Changes apply when a VM screen is opened again.</string>
+    <string name="th_group_plain">Plain themes</string>
+    <string name="th_group_skins">Device skin themes (by @regectt)</string>
+    <string name="th_group_custom">Custom themes</string>
+    <string name="th_custom_empty">No custom themes yet. Tap “New theme” to make one, or import an .aetheme file. Plain themes and device skins can’t be changed: duplicate one to edit it.</string>
+    <string name="th_expand">Expand list</string>
+    <string name="th_collapse">Collapse list</string>
     <string name="th_copy_of">%1$s (copy)</string>
     <string name="th_duplicate">Duplicate and edit</string>
     <string name="th_edit">Edit</string>
@@ -492,4 +501,20 @@
     <string name="thermal_invalid">Enter a value from -40 to 150.</string>
     <string name="thermal_apply">Apply</string>
     <string name="thermal_reset">Use default</string>
+
+    <!-- Library folders and arranging (legacy list and 0.0.0.3 grid) -->
+    <string name="folder_new">New folder</string>
+    <string name="folder_new_dots">New folder…</string>
+    <string name="folder_rename">Rename folder</string>
+    <string name="folder_delete">Delete folder (keeps the ROMs)</string>
+    <string name="folder_move">Move to folder</string>
+    <string name="folder_none">Not in a folder</string>
+    <string name="folder_default_name">Folder</string>
+    <string name="folder_empty">Empty — drop ROMs here</string>
+    <string name="folder_open">Open folder</string>
+    <string name="folder_close">Close folder</string>
+    <plurals name="folder_roms">
+        <item quantity="one">%d ROM</item>
+        <item quantity="other">%d ROMs</item>
+    </plurals>
 </resources>
