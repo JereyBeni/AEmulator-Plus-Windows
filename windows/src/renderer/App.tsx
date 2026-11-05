@@ -1,0 +1,224 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { materialPalette } from "./material";
+
+declare global {
+  interface Window {
+    aemu: any;
+  }
+}
+
+type Firmware = {
+  id: string; name: string; file: string; format: string;
+  androidVersion: string; folder: string | null; addedAt: number;
+};
+type Settings = { seedColor: string; dark: boolean; vmTheme: string; engineDir: string };
+
+const VM_THEMES = ["Original", "Sunset", "Gingerbread 2.x", "Honeycomb 3.x", "Holo 4.x", "Lollipop 5.x"];
+const api = window.aemu;
+
+export default function App() {
+  const [tab, setTab] = useState<"library" | "settings" | "engine">("library");
+  const [items, setItems] = useState<Firmware[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [folderFilter, setFolderFilter] = useState<string | null>(null);
+  const [toast, setToast] = useState<string>("");
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    api.library.list().then(setItems);
+    api.settings.get().then(setSettings);
+  }, []);
+
+  useEffect(() => {
+    if (!settings) return;
+    const palette = materialPalette(settings.seedColor, settings.dark);
+    const root = document.documentElement;
+    Object.entries(palette).forEach(([k, v]) => root.style.setProperty(k, v));
+    root.dataset.theme = settings.dark ? "dark" : "light";
+  }, [settings]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const folders = useMemo(
+    () => Array.from(new Set(items.map((f) => f.folder).filter(Boolean) as string[])),
+    [items]
+  );
+
+  const visible = items
+    .filter((f) => (folderFilter ? f.folder === folderFilter : true))
+    .filter((f) => f.name.toLowerCase().includes(query.toLowerCase()));
+
+  async function importFirmware() {
+    setItems(await api.library.import());
+  }
+  async function remove(id: string) {
+    setItems(await api.library.remove(id));
+  }
+  async function move(id: string, folder: string | null) {
+    setItems(await api.library.move(id, folder));
+  }
+  async function newFolder(id: string) {
+    const name = window.prompt("Nombre de la carpeta");
+    if (name && name.trim()) await move(id, name.trim());
+  }
+  async function shift(id: string, dir: -1 | 1) {
+    const ids = items.map((f) => f.id);
+    const i = ids.indexOf(id);
+    const j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    setItems(await api.library.reorder(ids));
+  }
+  async function start(id: string) {
+    const res = await api.engine.start(id);
+    setToast(res.message);
+  }
+  async function patch(p: Partial<Settings>) {
+    setSettings(await api.settings.set(p));
+  }
+
+  if (!settings) return <div className="splash">Cargando…</div>;
+
+  return (
+    <div className="shell">
+      <nav className="rail">
+        <div className="brand">AEmulator<span> Plus</span></div>
+        {(["library", "settings", "engine"] as const).map((t) => (
+          <button key={t} className={`nav ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+            {t === "library" ? "Biblioteca" : t === "settings" ? "Ajustes" : "Motor"}
+          </button>
+        ))}
+      </nav>
+
+      <main className="content">
+        {tab === "library" && (
+          <section>
+            <header className="top">
+              <h1>Biblioteca</h1>
+              <div className="row">
+                <input
+                  className="search"
+                  placeholder="Buscar firmware"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                <button className="filled" onClick={importFirmware}>Agregar firmware</button>
+              </div>
+            </header>
+
+            <div className="chips">
+              <button className={`chip ${folderFilter === null ? "on" : ""}`} onClick={() => setFolderFilter(null)}>Todos</button>
+              {folders.map((f) => (
+                <button key={f} className={`chip ${folderFilter === f ? "on" : ""}`} onClick={() => setFolderFilter(f)}>{f}</button>
+              ))}
+            </div>
+
+            {visible.length === 0 ? (
+              <div className="empty">
+                <p>No hay firmwares todavía.</p>
+                <p className="muted">Formatos: ISO, ZIP, IMG, TAR.MD5, TGZ, SBF, PAC, NBH, RUU.exe. Ideal: Android 2.3 a 3.0.</p>
+              </div>
+            ) : (
+              <ul className="list">
+                {visible.map((f) => (
+                  <li key={f.id} className="card">
+                    <div className="card-main">
+                      <div className="title">{f.name}</div>
+                      <div className="muted">
+                        {f.format} · Android {f.androidVersion}
+                        {f.folder ? ` · ${f.folder}` : ""}
+                      </div>
+                    </div>
+                    <div className="actions">
+                      <button className="filled small" onClick={() => start(f.id)}>Iniciar</button>
+                      <button className="tonal small" onClick={() => shift(f.id, -1)} title="Subir">↑</button>
+                      <button className="tonal small" onClick={() => shift(f.id, 1)} title="Bajar">↓</button>
+                      <button className="tonal small" onClick={() => newFolder(f.id)}>Carpeta</button>
+                      {f.folder && <button className="tonal small" onClick={() => move(f.id, null)}>Quitar carpeta</button>}
+                      <button className="text small" onClick={() => remove(f.id)}>Quitar</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {tab === "settings" && (
+          <section>
+            <header className="top"><h1>Ajustes</h1></header>
+
+            <div className="group">
+              <label className="field">
+                <span>Color base</span>
+                <input type="color" value={settings.seedColor} onChange={(e) => patch({ seedColor: e.target.value })} />
+              </label>
+              <label className="field">
+                <span>Tema oscuro</span>
+                <input type="checkbox" checked={settings.dark} onChange={(e) => patch({ dark: e.target.checked })} />
+              </label>
+            </div>
+
+            <div className="group">
+              <label className="field">
+                <span>Tema de la pantalla de la VM</span>
+                <select value={settings.vmTheme} onChange={(e) => patch({ vmTheme: e.target.value })}>
+                  {VM_THEMES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </label>
+              <p className="muted">Los temas personalizados (.aetheme) llegan en una versión posterior.</p>
+            </div>
+
+            <div className="group">
+              <div className="field">
+                <span>Carpeta del motor</span>
+                <span className="muted path">{settings.engineDir || "No configurada"}</span>
+              </div>
+              <div className="row">
+                <button className="tonal" onClick={async () => {
+                  const dir = await api.app.pickEngineDir();
+                  if (dir) patch({ engineDir: dir });
+                }}>Elegir carpeta</button>
+                <button className="text" onClick={() => api.app.openDataFolder()}>Abrir carpeta de datos</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {tab === "engine" && <EnginePanel />}
+      </main>
+
+      {toast && <div className="snackbar" role="status">{toast}</div>}
+    </div>
+  );
+}
+
+function EnginePanel() {
+  const [status, setStatus] = useState<{ available: boolean; running: boolean; path: string } | null>(null);
+  useEffect(() => {
+    api.engine.status().then(setStatus);
+  }, []);
+  return (
+    <section>
+      <header className="top"><h1>Motor</h1></header>
+      <div className="group">
+        <p>
+          <strong>Estado:</strong>{" "}
+          {status === null ? "Revisando…" : status.available ? "Motor encontrado" : "Motor no instalado"}
+        </p>
+        {status?.path && <p className="muted path">{status.path}</p>}
+        <p className="muted">
+          El motor de emulación para Windows todavía está en desarrollo. Esta versión usa un qemu-system-arm externo
+          que vos indiques en Ajustes; la versión final lo incluirá.
+        </p>
+        <div className="row">
+          <button className="tonal" onClick={() => api.engine.stop()}>Detener</button>
+        </div>
+      </div>
+    </section>
+  );
+}
