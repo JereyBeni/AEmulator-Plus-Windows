@@ -21,6 +21,7 @@ interface Settings {
   engineDir: string;
   qemuPath: string;
   memoryMb: number;
+  accelerator: string;
   dalvikJit: boolean;
   phoneGpu: boolean;
 }
@@ -36,6 +37,7 @@ const DEFAULT_SETTINGS: Settings = {
   engineDir: "",
   qemuPath: "",
   memoryMb: 1536,
+  accelerator: "tcg",
   dalvikJit: true,
   phoneGpu: true,
 };
@@ -211,7 +213,7 @@ function registerIpc() {
     const memory = Math.max(1024, Math.min(2048, Number(settings.memoryMb) || 1536));
     const args = [
       "-name", `AEmulator Plus - ${fw.name}`,
-      "-machine", "pc,accel=tcg",
+      "-machine", `pc,accel=${settings.accelerator === "whpx" ? "whpx" : "tcg"}`,
       "-cpu", "qemu64",
       "-smp", "2",
       "-m", String(memory),
