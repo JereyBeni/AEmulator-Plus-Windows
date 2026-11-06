@@ -13,7 +13,7 @@ type Firmware = {
 };
 type Settings = {
   seedColor: string; dark: boolean; vmTheme: string; engineDir: string;
-  qemuPath: string; memoryMb: number;
+  qemuPath: string; memoryMb: number; accelerator: string;
   dalvikJit: boolean; phoneGpu: boolean;
 };
 
@@ -209,8 +209,15 @@ export default function App() {
                     <option value={2048}>2 GB</option>
                   </select>
                 </label>
+                <label className="field">
+                  <span>Aceleración de CPU</span>
+                  <select value={settings.accelerator} onChange={(e) => patch({ accelerator: e.target.value })}>
+                    <option value="tcg">TCG (compatible)</option>
+                    <option value="whpx">WHPX (hardware)</option>
+                  </select>
+                </label>
               </div>
-              <p className="muted">QEMU debe incluir qemu-img.exe en la misma carpeta. Este perfil usa emulación TCG y VGA estándar para máxima compatibilidad, sin aceleración 3D de GPU.</p>
+              <p className="muted">QEMU debe incluir qemu-img.exe en la misma carpeta. TCG funciona por software; WHPX requiere que la característica Windows Hypervisor Platform esté habilitada y que tu compilación de QEMU la soporte. VGA estándar no ofrece aceleración 3D.</p>
             </div>
 
             <div className="group">
@@ -255,7 +262,7 @@ function EnginePanel() {
         <p className="muted">
           Este backend inicia ISOs Android-x86 con qemu-system-x86_64, crea un disco qcow2 persistente de 8 GB y conserva la instalación entre arranques. En el primer inicio arranca el instalador desde la ISO; los siguientes arrancan desde el disco virtual.
         </p>
-        <p className="muted">Este modo es x86/x86_64. No arranca directamente ROMs ZIP, SBF, PAC, NBH ni imágenes ARM de teléfonos. Tampoco ofrece aceleración 3D ni GPU passthrough en esta configuración TCG.</p>
+        <p className="muted">Este modo es x86/x86_64. No arranca directamente ROMs ZIP, SBF, PAC, NBH ni imágenes ARM de teléfonos. La aceleración de CPU WHPX no equivale a aceleración 3D ni a GPU passthrough.</p>
         <div className="row">
           <button className="tonal" onClick={() => api.engine.stop()}>Detener VM</button>
           <button className="text" onClick={() => api.app.openDataFolder()}>Ver discos virtuales</button>
