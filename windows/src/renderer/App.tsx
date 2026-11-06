@@ -13,6 +13,7 @@ type Firmware = {
 };
 type Settings = {
   seedColor: string; dark: boolean; vmTheme: string; engineDir: string;
+  qemuPath: string; memoryMb: number;
   dalvikJit: boolean; phoneGpu: boolean;
 };
 
@@ -190,8 +191,31 @@ export default function App() {
             </div>
 
             <div className="group">
+              <h2>QEMU para Android-x86</h2>
               <div className="field">
-                <span>Carpeta del motor</span>
+                <span>Ejecutable qemu-system-x86_64.exe</span>
+                <span className="muted path">{settings.qemuPath || "No configurado"}</span>
+              </div>
+              <div className="row">
+                <button className="tonal" onClick={async () => {
+                  const exe = await api.app.pickQemuFile();
+                  if (exe) patch({ qemuPath: exe });
+                }}>Seleccionar QEMU</button>
+                <label className="field">
+                  <span>RAM de la VM</span>
+                  <select value={settings.memoryMb} onChange={(e) => patch({ memoryMb: Number(e.target.value) })}>
+                    <option value={1024}>1 GB</option>
+                    <option value={1536}>1.5 GB</option>
+                    <option value={2048}>2 GB</option>
+                  </select>
+                </label>
+              </div>
+              <p className="muted">QEMU debe incluir qemu-img.exe en la misma carpeta. Este perfil usa emulación TCG y VGA estándar para máxima compatibilidad, sin aceleración 3D de GPU.</p>
+            </div>
+
+            <div className="group">
+              <div className="field">
+                <span>Carpeta del motor heredado</span>
                 <span className="muted path">{settings.engineDir || "No configurada"}</span>
               </div>
               <div className="row">
@@ -215,7 +239,7 @@ export default function App() {
 }
 
 function EnginePanel() {
-  const [status, setStatus] = useState<{ available: boolean; running: boolean; path: string } | null>(null);
+  const [status, setStatus] = useState<{ available: boolean; diskToolAvailable: boolean; running: boolean; path: string; target: string } | null>(null);
   useEffect(() => {
     api.engine.status().then(setStatus);
   }, []);
@@ -225,15 +249,16 @@ function EnginePanel() {
       <div className="group">
         <p>
           <strong>Estado:</strong>{" "}
-          {status === null ? "Revisando…" : status.available ? "Motor encontrado" : "Motor no instalado"}
+          {status === null ? "Revisando…" : status.available && status.diskToolAvailable ? "QEMU x86_64 listo" : status.available ? "Falta qemu-img.exe" : "QEMU no configurado"}
         </p>
         {status?.path && <p className="muted path">{status.path}</p>}
         <p className="muted">
-          El motor de emulación para Windows todavía está en desarrollo. Esta versión usa un qemu-system-arm externo
-          que vos indiques en Ajustes; la versión final lo incluirá.
+          Este backend inicia ISOs Android-x86 con qemu-system-x86_64, crea un disco qcow2 persistente de 8 GB y conserva la instalación entre arranques. En el primer inicio arranca el instalador desde la ISO; los siguientes arrancan desde el disco virtual.
         </p>
+        <p className="muted">Este modo es x86/x86_64. No arranca directamente ROMs ZIP, SBF, PAC, NBH ni imágenes ARM de teléfonos. Tampoco ofrece aceleración 3D ni GPU passthrough en esta configuración TCG.</p>
         <div className="row">
-          <button className="tonal" onClick={() => api.engine.stop()}>Detener</button>
+          <button className="tonal" onClick={() => api.engine.stop()}>Detener VM</button>
+          <button className="text" onClick={() => api.app.openDataFolder()}>Ver discos virtuales</button>
         </div>
       </div>
     </section>
