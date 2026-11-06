@@ -1,41 +1,49 @@
 # AEmulator Plus for Windows
 
-A standalone Windows desktop application built with Electron, React and TypeScript. It is not an Android APK wrapper.
+Electron + React + TypeScript desktop frontend with an initial QEMU Android-x86 backend.
 
 ## Requirements
 
-- Windows 10 or Windows 11, 64-bit
-- Node.js 20 or newer
-- npm
+- Windows 10/11 x64
+- Node.js 20+
+- A Windows QEMU build containing `qemu-system-x86_64.exe` and `qemu-img.exe`
 
-## Development
+## Run
 
     cd windows
     npm install
     npm start
 
-## Build
+## Configure QEMU
 
-    npm run dist:win
+1. In Settings, choose `qemu-system-x86_64.exe`.
+2. Keep `qemu-img.exe` in the same directory.
+3. Import an Android-x86 ISO and press Start.
+4. First boot creates an 8 GB QCOW2 disk and boots the ISO installer.
+5. Install Android-x86 to that virtual disk. Subsequent launches boot from the disk.
 
-The portable Windows ZIP is written to `dist/`.
+The disk is stored in Electron's user-data directory under `vms/<firmware-id>.qcow2`.
 
-## Included desktop features
+## Virtual hardware
 
-- Firmware library with Add firmware, search, folders, reorder and remove.
-- Material-inspired responsive interface.
-- Settings for accent color, dark mode and VM screen theme.
-- Dalvik JIT enabled by default.
-- Phone GPU acceleration enabled by default.
-- Persistent firmware library and settings.
-- About page with links to AEmulator Plus, AEmulator Sunset and original AEmulator.
+- x86_64 PC machine
+- TCG software CPU emulation
+- 1.5 GB RAM default (configurable 1-2 GB)
+- Standard VGA
+- IDE QCOW2 disk
+- E1000 user-mode networking
+- USB tablet input
 
-## QEMU and guest-engine status
+TCG favors compatibility but can be slow. Standard VGA does not provide 3D acceleration.
 
-The Electron main process includes an experimental external QEMU process hook. The complete Android guest engine has **not** been ported to Windows yet. The current launcher is not proof that every firmware format boots correctly.
+## Compatibility
 
-The Dalvik JIT and phone-GPU settings are persisted as defaults for the planned Windows guest engine. They are not yet connected to a Windows-native guest runtime or graphics bridge.
+This backend boots Android-x86 PC ISO images. It does **not** directly boot arbitrary ARM phone firmware archives such as ZIP, SBF, PAC, NBH or vendor IMG files. Those require an appropriate emulated phone board, matching kernel/drivers, and Android boot-image integration. QEMU's generic ARM `virt` board is not interchangeable with a real phone motherboard.
 
-The Android application depends on patched QEMU binaries, firmware extraction and repair code, Binder compatibility, and graphics/audio bridges. These Android-host-specific components need Windows-native replacements before the same ARM firmware can boot reliably on Windows.
+Dalvik JIT and phone GPU preferences are persisted, but they are not yet applied to guest Android settings or hardware acceleration.
 
-Firmware is not bundled. Import only files you are permitted to use.
+## Related projects
+
+- https://github.com/somerandomusernam2/AEmulator-Plus
+- https://github.com/drel4/AEmulator-Sunset
+- https://github.com/uxazu/AEmulator
