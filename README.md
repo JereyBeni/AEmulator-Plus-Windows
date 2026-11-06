@@ -25,12 +25,13 @@ AEmulator Plus for Windows is built with **Electron, React and TypeScript**. It 
 
 The first working backend targets **Android-x86**. QEMU emulates a standard x86 PC, which Android-x86 is designed to boot on.
 
-1. Install a Windows build of QEMU that includes both `qemu-system-x86_64.exe` and `qemu-img.exe`.
-2. Open AEmulator Plus and go to **Settings → QEMU para Android-x86**.
-3. Select `qemu-system-x86_64.exe`. Keep `qemu-img.exe` in the same folder.
-4. Import an Android-x86 ISO using **Add firmware**.
-5. Press **Iniciar**. On first boot, choose the Android-x86 installation option and install to the offered 8 GB virtual disk.
-6. Shut down the guest normally. Later launches boot from its persistent virtual disk.
+1. Install a [Windows build of QEMU](https://www.qemu.org/download/) that includes both `qemu-system-x86_64.exe` and `qemu-img.exe`.
+2. Download an [Android-x86 ISO](https://www.android-x86.org/download).
+3. Open AEmulator Plus and go to **Settings → QEMU para Android-x86**.
+4. Select `qemu-system-x86_64.exe`. Keep `qemu-img.exe` in the same folder.
+5. Import the Android-x86 ISO using **Add firmware**.
+6. Press **Iniciar**. On first boot, choose the Android-x86 installation option and install to the offered 8 GB virtual disk.
+7. Shut down the guest normally. Later launches boot from its persistent virtual disk.
 
 Virtual disks are stored under the app's user-data folder in `vms/`. Removing a firmware entry from the library does not delete its virtual disk.
 
@@ -38,14 +39,14 @@ Virtual disks are stored under the app's user-data folder in `vms/`. Removing a 
 
 - Machine: PC/i440FX
 - CPU: QEMU x86_64
-- Accelerator: TCG (software emulation, selected for broad compatibility)
+- Accelerator: TCG by default; optional WHPX hardware virtualization on supported Windows/QEMU installations
 - RAM: 1.5 GB by default, configurable up to 2 GB
 - Graphics: standard VGA
 - Storage: persistent QCOW2 disk + source ISO
 - Network: user-mode networking with an emulated Intel E1000 adapter
 - Input: USB tablet
 
-TCG can be slow because it emulates the CPU in software. This configuration does not provide 3D GPU acceleration or phone-GPU passthrough.
+TCG can be slow because it emulates the CPU in software. WHPX can accelerate CPU virtualization when the Windows Hypervisor Platform feature and a WHPX-enabled QEMU build are available. Neither option provides phone-GPU passthrough; standard VGA is not 3D acceleration.
 
 ## Important compatibility boundary
 
