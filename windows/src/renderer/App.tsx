@@ -109,7 +109,7 @@ export default function App() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
-                <button className="filled" onClick={importFirmware}>Agregar firmware</button>
+                <button className="filled" onClick={importFirmware}>Add firmware</button>
               </div>
             </header>
 
