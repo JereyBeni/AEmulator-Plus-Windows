@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 import * as fs from "fs";
 import * as path from "path";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, spawnSync, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
 
 interface Firmware {
@@ -19,6 +19,8 @@ interface Settings {
   dark: boolean;
   vmTheme: string;
   engineDir: string;
+  qemuPath: string;
+  memoryMb: number;
   dalvikJit: boolean;
   phoneGpu: boolean;
 }
@@ -32,6 +34,8 @@ const DEFAULT_SETTINGS: Settings = {
   dark: true,
   vmTheme: "Original",
   engineDir: "",
+  qemuPath: "",
+  memoryMb: 1536,
   dalvikJit: true,
   phoneGpu: true,
 };
@@ -155,28 +159,93 @@ function registerIpc() {
   });
 
   ipcMain.handle("engine:status", () => {
-    const { engineDir } = readJson<Settings>(SETTINGS_FILE, DEFAULT_SETTINGS);
-    const exe = engineDir ? path.join(engineDir, "qemu-system-arm.exe") : "";
+    const settings = readJson<Settings>(SETTINGS_FILE, DEFAULT_SETTINGS);
+    const exe = settings.qemuPath || (settings.engineDir ? path.join(settings.engineDir, "qemu-system-x86_64.exe") : "");
+    const imageTool = exe ? path.join(path.dirname(exe), "qemu-img.exe") : "";
     return {
       available: !!exe && fs.existsSync(exe),
+      diskToolAvailable: !!imageTool && fs.existsSync(imageTool),
       running: !!engineProcess,
       path: exe,
+      target: "x86_64",
     };
   });
 
-  // El motor todavía no está portado: sólo lanza un qemu-system-arm externo si el usuario lo apunta.
-  ipcMain.handle("engine:start", (_e, firmwareId: string) => {
+  ipcMain.handle("engine:start", async (_e, firmwareId: string) => {
     const fw = loadLibrary().find((f) => f.id === firmwareId);
     if (!fw) return { ok: false, message: "Firmware no encontrado" };
-    const { engineDir } = readJson<Settings>(SETTINGS_FILE, DEFAULT_SETTINGS);
-    const exe = engineDir ? path.join(engineDir, "qemu-system-arm.exe") : "";
-    if (!exe || !fs.existsSync(exe)) {
-      return { ok: false, message: "Motor no instalado: indicá la carpeta del motor en Ajustes" };
+    if (path.extname(fw.file).toLowerCase() !== ".iso") {
+      return {
+        ok: false,
+        message: "Este primer backend arranca ISOs Android-x86. Los ZIP/IMG de teléfonos ARM necesitan un kernel y una placa QEMU compatibles; no se pueden arrancar como si fueran una ISO de PC.",
+      };
     }
-    if (engineProcess) return { ok: false, message: "Ya hay una máquina virtual corriendo" };
-    engineProcess = spawn(exe, ["-M", "versatilepb", "-m", "256", "-cpu", "arm1176", "-cdrom", fw.file], { stdio: "ignore" });
-    engineProcess.on("exit", () => (engineProcess = null));
-    return { ok: true, message: `Iniciado: ${fw.name}` };
+    if (!fs.existsSync(fw.file)) return { ok: false, message: "No se encuentra el archivo ISO." };
+    if (engineProcess) return { ok: false, message: "Ya hay una máquina virtual corriendo." };
+
+    const settings = readJson<Settings>(SETTINGS_FILE, DEFAULT_SETTINGS);
+    const exe = settings.qemuPath || (settings.engineDir ? path.join(settings.engineDir, "qemu-system-x86_64.exe") : "");
+    if (!exe || !fs.existsSync(exe)) {
+      return { ok: false, message: "No encuentro qemu-system-x86_64.exe. Seleccionalo en Ajustes." };
+    }
+
+    const imageTool = path.join(path.dirname(exe), "qemu-img.exe");
+    if (!fs.existsSync(imageTool)) {
+      return { ok: false, message: "Falta qemu-img.exe en la misma carpeta que QEMU. Se necesita para crear el disco virtual persistente." };
+    }
+
+    const vmDir = path.join(DATA_DIR, "vms");
+    fs.mkdirSync(vmDir, { recursive: true });
+    const disk = path.join(vmDir, `${fw.id}.qcow2`);
+    const isFirstBoot = !fs.existsSync(disk);
+    if (isFirstBoot) {
+      const create = spawnSync(imageTool, ["create", "-f", "qcow2", disk, "8G"], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      if (create.error || create.status !== 0) {
+        return { ok: false, message: `No pude crear el disco virtual: ${create.stderr || create.error?.message || "qemu-img failed"}` };
+      }
+    }
+
+    const memory = Math.max(1024, Math.min(2048, Number(settings.memoryMb) || 1536));
+    const args = [
+      "-name", `AEmulator Plus - ${fw.name}`,
+      "-machine", "pc,accel=tcg",
+      "-cpu", "qemu64",
+      "-smp", "2",
+      "-m", String(memory),
+      "-vga", "std",
+      "-usb",
+      "-device", "usb-tablet",
+      "-netdev", "user,id=net0",
+      "-device", "e1000,netdev=net0",
+      "-drive", `file=${disk},if=ide,index=0,media=disk,format=qcow2`,
+      "-cdrom", fw.file,
+      "-boot", isFirstBoot ? "order=d" : "order=c",
+      "-rtc", "base=localtime",
+    ];
+
+    try {
+      const child = spawn(exe, args, { stdio: "ignore", windowsHide: false });
+      engineProcess = child;
+      child.once("error", (error) => {
+        engineProcess = null;
+        win?.webContents.send("engine:error", error.message);
+      });
+      child.once("exit", () => {
+        if (engineProcess === child) engineProcess = null;
+      });
+      return {
+        ok: true,
+        message: isFirstBoot
+          ? "QEMU iniciado. Instalá Android-x86 en el disco virtual de 8 GB; en los próximos arranques iniciará desde ese disco."
+          : `Android iniciado desde el disco virtual de ${fw.name}.`,
+      };
+    } catch (error) {
+      engineProcess = null;
+      return { ok: false, message: `No pude iniciar QEMU: ${String(error)}` };
+    }
   });
 
   ipcMain.handle("engine:stop", () => {
@@ -198,6 +267,15 @@ function registerIpc() {
   ipcMain.handle("app:pickEngineDir", async () => {
     if (!win) return null;
     const res = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
+    return res.canceled ? null : res.filePaths[0];
+  });
+  ipcMain.handle("app:pickQemuFile", async () => {
+    if (!win) return null;
+    const res = await dialog.showOpenDialog(win, {
+      title: "Seleccionar QEMU para x86_64",
+      properties: ["openFile"],
+      filters: [{ name: "QEMU system emulator", extensions: ["exe"] }],
+    });
     return res.canceled ? null : res.filePaths[0];
   });
   ipcMain.handle("app:systemDark", () => nativeTheme.shouldUseDarkColors);
