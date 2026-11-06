@@ -11,13 +11,16 @@ type Firmware = {
   id: string; name: string; file: string; format: string;
   androidVersion: string; folder: string | null; addedAt: number;
 };
-type Settings = { seedColor: string; dark: boolean; vmTheme: string; engineDir: string };
+type Settings = {
+  seedColor: string; dark: boolean; vmTheme: string; engineDir: string;
+  dalvikJit: boolean; phoneGpu: boolean;
+};
 
 const VM_THEMES = ["Original", "Sunset", "Gingerbread 2.x", "Honeycomb 3.x", "Holo 4.x", "Lollipop 5.x"];
 const api = window.aemu;
 
 export default function App() {
-  const [tab, setTab] = useState<"library" | "settings" | "engine">("library");
+  const [tab, setTab] = useState<"library" | "settings" | "engine" | "about">("library");
   const [items, setItems] = useState<Firmware[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [folderFilter, setFolderFilter] = useState<string | null>(null);
@@ -87,9 +90,9 @@ export default function App() {
     <div className="shell">
       <nav className="rail">
         <div className="brand">AEmulator<span> Plus</span></div>
-        {(["library", "settings", "engine"] as const).map((t) => (
+        {(["library", "settings", "engine", "about"] as const).map((t) => (
           <button key={t} className={`nav ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "library" ? "Biblioteca" : t === "settings" ? "Ajustes" : "Motor"}
+            {t === "library" ? "Biblioteca" : t === "settings" ? "Ajustes" : t === "engine" ? "Motor" : "Acerca de"}
           </button>
         ))}
       </nav>
@@ -153,6 +156,19 @@ export default function App() {
             <header className="top"><h1>Ajustes</h1></header>
 
             <div className="group">
+              <h2>Opciones del sistema invitado</h2>
+              <label className="field">
+                <span>Dalvik JIT</span>
+                <input type="checkbox" checked={settings.dalvikJit} onChange={(e) => patch({ dalvikJit: e.target.checked })} />
+              </label>
+              <label className="field">
+                <span>Aceleración de GPU del teléfono</span>
+                <input type="checkbox" checked={settings.phoneGpu} onChange={(e) => patch({ phoneGpu: e.target.checked })} />
+              </label>
+              <p className="muted">Ambas opciones están activadas de forma predeterminada. Por ahora se guardan como preferencias; todavía no están conectadas al motor QEMU de Windows.</p>
+            </div>
+
+            <div className="group">
               <label className="field">
                 <span>Color base</span>
                 <input type="color" value={settings.seedColor} onChange={(e) => patch({ seedColor: e.target.value })} />
@@ -190,6 +206,7 @@ export default function App() {
         )}
 
         {tab === "engine" && <EnginePanel />}
+        {tab === "about" && <AboutPanel />}
       </main>
 
       {toast && <div className="snackbar" role="status">{toast}</div>}
@@ -219,6 +236,31 @@ function EnginePanel() {
           <button className="tonal" onClick={() => api.engine.stop()}>Detener</button>
         </div>
       </div>
+    </section>
+  );
+}
+
+
+function AboutPanel() {
+  const links = [
+    ["AEmulator Plus original", "https://github.com/somerandomusernam2/AEmulator-Plus"],
+    ["AEmulator Sunset", "https://github.com/drel4/AEmulator-Sunset"],
+    ["Original AEmulator", "https://github.com/uxazu/AEmulator"],
+  ];
+  return (
+    <section>
+      <header className="top"><h1>Acerca de AEmulator Plus</h1></header>
+      <div className="group">
+        <h2>Proyectos relacionados</h2>
+        <p className="muted">Este es un frontend de escritorio independiente para Windows, inspirado en la familia AEmulator.</p>
+        {links.map(([label, url]) => (
+          <div className="field" key={url}>
+            <span>{label}</span>
+            <button className="tonal" onClick={() => api.app.openExternal(url)}>Abrir proyecto ↗</button>
+          </div>
+        ))}
+      </div>
+      <p className="muted">Los firmwares no se incluyen. Usá imágenes que tengas derecho a utilizar. El motor de emulación Android todavía necesita un port nativo para Windows.</p>
     </section>
   );
 }
