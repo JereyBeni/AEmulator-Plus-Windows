@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("aemu", {
     openDataFolder: () => ipcRenderer.invoke("app:openDataFolder"),
     openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url),
     pickEngineDir: () => ipcRenderer.invoke("app:pickEngineDir"),
+    pickQemuFile: () => ipcRenderer.invoke("app:pickQemuFile"),
     systemDark: () => ipcRenderer.invoke("app:systemDark"),
   },
 });
