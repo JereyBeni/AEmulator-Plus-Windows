@@ -2,76 +2,79 @@
 
 # AEmulator Plus for Windows
 
-**A standalone Windows desktop frontend for managing Android firmware experiments.**
+**A standalone Windows desktop frontend for Android firmware experiments.**
 
-Material-inspired interface · Firmware library · QEMU integration groundwork
+Material-inspired interface · Firmware library · QEMU Android-x86 backend
 
 </div>
 
 ---
 
-AEmulator Plus for Windows is a desktop application built with **Electron, React and TypeScript**. It is a separate Windows application, not an Android APK running inside a wrapper.
-
-The goal is to bring the AEmulator family workflow to Windows: keep firmware files in a local library, configure guest preferences, and provide a desktop interface for a future Windows-native Android emulation engine.
+AEmulator Plus for Windows is built with **Electron, React and TypeScript**. It is a native Windows desktop application, not an Android APK wrapper.
 
 ## Current features
 
-- **Firmware library:** add and remove firmware files, search the collection, create folders, and reorder entries.
-- **Material-inspired interface:** tonal colors, rounded controls, responsive navigation, and light/dark appearance.
-- **Settings:** configurable accent color, dark theme, VM screen theme, engine directory, and guest preferences.
-- **Dalvik JIT:** enabled by default.
-- **Phone GPU acceleration:** enabled by default.
-- **Related projects:** direct links to AEmulator Plus, AEmulator Sunset, and the original AEmulator.
-- **Local data:** firmware library and settings are stored in the Windows user-data directory.
+- Firmware library with import, search, folders, reorder and remove.
+- Material-inspired desktop interface with light/dark themes.
+- Dalvik JIT and phone GPU preferences enabled by default.
+- About page linking AEmulator Plus, AEmulator Sunset and the original AEmulator.
+- **QEMU x86_64 backend:** boots Android-x86 ISO images, creates a persistent 8 GB QCOW2 disk, and boots the installed system from disk on later launches.
+- Configurable QEMU executable and guest RAM (1, 1.5 or 2 GB).
 
-> **Emulation status:** the Windows UI and firmware library are desktop-native. The Android guest engine is not yet fully ported from Android. The current QEMU process hook is experimental; it does not establish compatibility with arbitrary Android firmware. The Dalvik JIT and phone-GPU switches are saved preferences and are not yet wired into a Windows guest engine.
+## Run Android
 
-## Run on Windows
+The first working backend targets **Android-x86**. QEMU emulates a standard x86 PC, which Android-x86 is designed to boot on.
 
-### Requirements
+1. Install a Windows build of QEMU that includes both `qemu-system-x86_64.exe` and `qemu-img.exe`.
+2. Open AEmulator Plus and go to **Settings → QEMU para Android-x86**.
+3. Select `qemu-system-x86_64.exe`. Keep `qemu-img.exe` in the same folder.
+4. Import an Android-x86 ISO using **Add firmware**.
+5. Press **Iniciar**. On first boot, choose the Android-x86 installation option and install to the offered 8 GB virtual disk.
+6. Shut down the guest normally. Later launches boot from its persistent virtual disk.
 
-- Windows 10 or Windows 11 (64-bit)
-- Node.js 20 or newer
-- npm (included with Node.js)
+Virtual disks are stored under the app's user-data folder in `vms/`. Removing a firmware entry from the library does not delete its virtual disk.
 
-### Start the application
+### QEMU configuration
 
-PowerShell:
+- Machine: PC/i440FX
+- CPU: QEMU x86_64
+- Accelerator: TCG (software emulation, selected for broad compatibility)
+- RAM: 1.5 GB by default, configurable up to 2 GB
+- Graphics: standard VGA
+- Storage: persistent QCOW2 disk + source ISO
+- Network: user-mode networking with an emulated Intel E1000 adapter
+- Input: USB tablet
+
+TCG can be slow because it emulates the CPU in software. This configuration does not provide 3D GPU acceleration or phone-GPU passthrough.
+
+## Important compatibility boundary
+
+QEMU supports different CPU architectures and virtual boards, but an Android firmware must contain a kernel and drivers for the machine being emulated. An Android-x86 ISO can boot as a PC guest. A random ARM phone ROM (`.zip`, `.sbf`, `.pac`, `.nbh`, or a vendor `.img`) cannot be passed to the x86 PC machine and expected to boot.
+
+Running ARM phone firmware needs a compatible ARM board model, matching kernel/device drivers, boot image unpacking, and Android hardware services. QEMU's generic ARM `virt` board is not a drop-in replacement for a real phone motherboard. The Android emulator's Goldfish/Ranchu device models are a separate integration target.
+
+The Dalvik JIT and phone GPU switches remain saved guest preferences. They are not currently wired to Android-x86's guest properties or to 3D acceleration.
+
+## Development
+
+Requirements: Windows 10/11 x64, Node.js 20+, npm.
 
     cd windows
     npm install
     npm start
 
-### Build a portable Windows package
+Build a portable Windows ZIP:
 
-    cd windows
-    npm install
     npm run dist:win
 
-The portable ZIP is generated in `windows/dist/`.
+## Related projects
 
-## Project structure
+- [AEmulator Plus (original Android fork)](https://github.com/somerandomusernam2/AEmulator-Plus)
+- [AEmulator Sunset](https://github.com/drel4/AEmulator-Sunset)
+- [Original AEmulator](https://github.com/uxazu/AEmulator)
 
-- `windows/src/main/`: Electron main process, local persistence, file dialogs and IPC.
-- `windows/src/renderer/`: React interface and Material-inspired styling.
-- `windows/package.json`: dependencies and Windows packaging configuration.
-
-## Roadmap
-
-1. Complete the Windows firmware inspection and import pipeline.
-2. Port the patched QEMU guest engine and Android-specific host bridges.
-3. Connect Dalvik JIT and GPU preferences to the guest configuration.
-4. Implement reliable VM lifecycle, display, input, audio and storage integration.
-5. Add Windows packaging and automated smoke tests.
-
-## Related projects and credits
-
-- **AEmulator Plus (original Android fork):** https://github.com/somerandomusernam2/AEmulator-Plus
-- **AEmulator Sunset:** https://github.com/drel4/AEmulator-Sunset
-- **Original AEmulator:** https://github.com/uxazu/AEmulator
-
-AEmulator Plus is derived from the AEmulator family. This Windows desktop frontend is a separate implementation and does not claim authorship of the upstream Android engine.
+This Windows frontend is a separate desktop implementation. Firmware images are not bundled; use files you are permitted to use.
 
 ## License
 
-This project is distributed under GPL-3.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). Firmware images are not included and remain the responsibility of their respective owners.
+GPL-3.0. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
