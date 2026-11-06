@@ -19,6 +19,8 @@ interface Settings {
   dark: boolean;
   vmTheme: string;
   engineDir: string;
+  dalvikJit: boolean;
+  phoneGpu: boolean;
 }
 
 const DATA_DIR = app.getPath("userData");
@@ -30,6 +32,8 @@ const DEFAULT_SETTINGS: Settings = {
   dark: true,
   vmTheme: "Original",
   engineDir: "",
+  dalvikJit: true,
+  phoneGpu: true,
 };
 
 const SUPPORTED_EXT = [".iso", ".zip", ".img", ".tar.md5", ".tgz", ".sbf", ".pac", ".nbh", ".exe", ".dat.br"];
@@ -182,6 +186,15 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:openDataFolder", () => shell.openPath(DATA_DIR));
+  ipcMain.handle("app:openExternal", (_e, url: string) => {
+    const allowed = [
+      "https://github.com/somerandomusernam2/AEmulator-Plus",
+      "https://github.com/drel4/AEmulator-Sunset",
+      "https://github.com/uxazu/AEmulator",
+    ];
+    if (!allowed.includes(url)) return false;
+    return shell.openExternal(url).then(() => true);
+  });
   ipcMain.handle("app:pickEngineDir", async () => {
     if (!win) return null;
     const res = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
