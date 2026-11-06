@@ -1,24 +1,41 @@
-# AEmulator Plus para Windows (versión preliminar)
+# AEmulator Plus for Windows
 
-App de escritorio con Electron + React y estilo Material You.
+A standalone Windows desktop application built with Electron, React and TypeScript. It is not an Android APK wrapper.
 
-## Qué incluye
-- Biblioteca de firmwares: agregar, buscar, carpetas, reordenar y quitar.
-- Ajustes: color base (paleta tonal generada), tema claro/oscuro, tema de la pantalla de la VM.
-- Panel de motor: lanza un `qemu-system-arm.exe` externo que indiques.
+## Requirements
 
-## Qué todavía NO funciona
-- El motor de emulación Android no está portado a Windows. Sin un `qemu-system-arm.exe` configurado, "Iniciar" sólo muestra un aviso.
-- Temas `.aetheme` personalizados, arrastrar para reordenar y audio/GPU no están implementados.
-- Los firmwares no se validan ni se extraen todavía; sólo se registra su ruta.
+- Windows 10 or Windows 11, 64-bit
+- Node.js 20 or newer
+- npm
 
-## Desarrollo
-```bash
-cd windows
-npm install
-npm start          # compila y abre la app
-npm run dist:win   # genera dist/AEmulator Plus-0.1.0-win.zip
-```
+## Development
 
-El instalador NSIS requiere Wine al compilar desde Linux, así que el paquete es un ZIP portable.
-Para un instalador, compilar en Windows con `npm run dist:win` y cambiar `target` a `nsis`.
+    cd windows
+    npm install
+    npm start
+
+## Build
+
+    npm run dist:win
+
+The portable Windows ZIP is written to `dist/`.
+
+## Included desktop features
+
+- Firmware library with Add firmware, search, folders, reorder and remove.
+- Material-inspired responsive interface.
+- Settings for accent color, dark mode and VM screen theme.
+- Dalvik JIT enabled by default.
+- Phone GPU acceleration enabled by default.
+- Persistent firmware library and settings.
+- About page with links to AEmulator Plus, AEmulator Sunset and original AEmulator.
+
+## QEMU and guest-engine status
+
+The Electron main process includes an experimental external QEMU process hook. The complete Android guest engine has **not** been ported to Windows yet. The current launcher is not proof that every firmware format boots correctly.
+
+The Dalvik JIT and phone-GPU settings are persisted as defaults for the planned Windows guest engine. They are not yet connected to a Windows-native guest runtime or graphics bridge.
+
+The Android application depends on patched QEMU binaries, firmware extraction and repair code, Binder compatibility, and graphics/audio bridges. These Android-host-specific components need Windows-native replacements before the same ARM firmware can boot reliably on Windows.
+
+Firmware is not bundled. Import only files you are permitted to use.
